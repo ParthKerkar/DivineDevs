@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HeatWatch | Live WBGT GIS</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header><div><p class="eyebrow">EXTREME HEAT EARLY WARNING</p><h1>Live WBGT GIS</h1></div><p id="updated">Loading live weather…</p></header>
+  <main>
+    <section class="map-panel"><div id="map" aria-label="Interactive city WBGT map"></div><p class="map-help">Click a city marker to view its live WBGT and five-day forecast.</p></section>
+    <aside class="details-panel">
+      <p class="eyebrow" id="place">SELECT A CITY</p><div id="current" class="current-card"><p>Loading…</p></div>
+      <h2>5-day peak forecast</h2><div id="forecast" class="forecast"></div>
+      <h2>WBGT flag guide</h2>
+      <div class="legend"><span class="flag white">White &lt; 27.8°C</span><span class="flag green">Green 27.8–29.4°C</span><span class="flag yellow">Yellow 29.5–31.0°C</span><span class="flag red">Red 31.1–32.1°C</span><span class="flag black">Black ≥ 32.2°C</span></div>
+    </aside>
+  </main>
+  <template id="forecast-row"><article class="forecast-row"><time></time><strong></strong><span></span></article></template>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
