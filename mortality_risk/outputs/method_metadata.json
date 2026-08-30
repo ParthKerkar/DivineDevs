@@ -1,0 +1,18 @@
+{
+  "method": "Census-based demographic vulnerability times forecast Liljegren WBGT thermal hazard",
+  "age_weights": {
+    "older_60_plus_share": 0.45,
+    "child_0_4_share": 0.15,
+    "worker_population_share": 0.15,
+    "outdoor_worker_share": 0.25
+  },
+  "wbgt_screening_anchor_c": 26.0,
+  "town_weights": {
+    "state_older_60_plus_share": 0.3,
+    "child_0_6_share": 0.2,
+    "worker_population_share": 0.2,
+    "outdoor_worker_share": 0.3
+  },
+  "wbgt_top_alert_c": 32.2,
+  "warning": "Screening index only; town age 60+ uses a state-level C-14 proxy, not a local age count."
+}

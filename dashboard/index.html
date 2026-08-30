@@ -10,9 +10,10 @@
 <body>
   <header><div><p class="eyebrow">EXTREME HEAT EARLY WARNING</p><h1>Live WBGT GIS</h1></div><p id="updated">Loading live weather…</p></header>
   <main>
-    <section class="map-panel"><div id="map" aria-label="Interactive city WBGT map"></div><p class="map-help">Click a city marker to view its live WBGT and five-day forecast.</p></section>
+    <section class="map-panel"><div id="map" aria-label="Interactive city mortality-risk map"></div><p class="map-help">Marker colours show forecast mortality-risk screening factor. Click a city for its WBGT and risk details.</p></section>
     <aside class="details-panel">
       <p class="eyebrow" id="place">SELECT A CITY</p><div id="current" class="current-card"><p>Loading…</p></div>
+      <h2>Heat mortality screening</h2><div id="mortality" class="mortality-card"><p>Loading Census vulnerability and forecast WBGT…</p></div>
       <h2>5-day peak forecast</h2><div id="forecast" class="forecast"></div>
       <h2>WBGT flag guide</h2>
       <div class="legend"><span class="flag white">White &lt; 27.8°C</span><span class="flag green">Green 27.8–29.4°C</span><span class="flag yellow">Yellow 29.5–31.0°C</span><span class="flag red">Red 31.1–32.1°C</span><span class="flag black">Black ≥ 32.2°C</span></div>
