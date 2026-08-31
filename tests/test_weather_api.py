@@ -78,7 +78,12 @@ class WeatherApiContractTests(unittest.TestCase):
         }
         series = calculate_hourly_wbgt(data)
         self.assertEqual(series[1]["time"], "2026-08-31T14:00:00Z")
-        self.assertEqual(set(series[1]), {"lat", "lon", "time", "tair_c", "rh_pct", "wind_ms", "solar_wm2", "tnwb_c", "tglobe_c", "wbgt_c", "converged", "risk"})
+        self.assertEqual(set(series[1]), {
+            "lat", "lon", "time", "tair_c", "rh_pct", "wind_ms", "solar_wm2",
+            "tnwb_c", "tglobe_c", "wbgt_c", "converged", "risk",
+            "relative_risk", "attributable_fraction", "mortality_risk_index",
+            "epidemiological_risk_category"
+        })
         self.assertTrue(series[1]["converged"])
         maxima = daily_max_wbgt(series)
         self.assertEqual([item["time"][:10] for item in maxima], ["2026-08-31", "2026-09-01"])

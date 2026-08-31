@@ -3,23 +3,1042 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HeatWatch | Live WBGT GIS</title>
+  <title>Extreme Heatwave Early Warning & Mortality Risk GIS</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="styles.css">
+  <style>
+    :root {
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --bg-page: #0b132b;
+      --bg-panel: #1c2541;
+      --bg-card: #0b132b;
+      --border-color: #3a506b;
+      --text-primary: #ffffff;
+      --text-secondary: #cbd5e1;
+      --text-muted: #94a3b8;
+      --color-low: #10b981;
+      --color-moderate: #f59e0b;
+      --color-high: #f97316;
+      --color-very-high: #ef4444;
+      --color-extreme: #dc2626;
+      --color-brand: #38bdf8;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      background-color: var(--bg-page);
+      color: var(--text-primary);
+    }
+
+    header {
+      background: #070d1e;
+      border-bottom: 1px solid var(--border-color);
+      padding: 14px clamp(16px, 3vw, 40px);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.2rem, 2.2vw, 1.6rem);
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    h2 {
+      font-size: 0.88rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--color-brand);
+      margin: 18px 0 10px;
+      font-weight: 700;
+    }
+
+    .eyebrow {
+      letter-spacing: 0.1em;
+      font-weight: 700;
+      font-size: 0.7rem;
+      margin: 0 0 3px;
+      color: var(--color-brand);
+    }
+
+    .search-box {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    .search-box form {
+      display: flex;
+      gap: 8px;
+    }
+
+    .search-box input {
+      padding: 9px 14px;
+      background: #1c2541;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: white;
+      font-size: 0.9rem;
+      min-width: 280px;
+      outline: none;
+    }
+
+    .search-box input:focus {
+      border-color: var(--color-brand);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+    }
+
+    .search-box button {
+      padding: 9px 18px;
+      background: var(--color-brand);
+      color: #070d1e;
+      font-weight: 700;
+      font-size: 0.9rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.15s;
+    }
+
+    .search-box button:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+
+    #updated {
+      margin: 0;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.7fr) minmax(400px, 1.3fr);
+      max-width: 1720px;
+      margin: 0 auto;
+      padding: 16px;
+      gap: 16px;
+      min-height: calc(100vh - 80px);
+    }
+
+    .map-panel, .details-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #map {
+      height: 70vh;
+      min-height: 500px;
+      width: 100%;
+    }
+
+    .quick-cities-bar {
+      padding: 10px 14px;
+      background: #141c30;
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      overflow-x: auto;
+    }
+
+    .quick-label {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .chips-list {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+    }
+
+    .chip {
+      padding: 5px 12px;
+      background: #273549;
+      color: #e2e8f0;
+      border: 1px solid #3a506b;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+
+    .chip:hover {
+      background: var(--color-brand);
+      color: #070d1e;
+      border-color: var(--color-brand);
+    }
+
+    .details-panel {
+      padding: 18px;
+      overflow-y: auto;
+      max-height: calc(100vh - 100px);
+    }
+
+    .panel-header {
+      margin-bottom: 12px;
+    }
+
+    .panel-header .subtitle {
+      margin: 2px 0 0;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .current-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .current-card h3 {
+      margin: 0 0 6px;
+      font-size: 1.05rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .current-card .wbgt-display {
+      font-size: 2.6rem;
+      font-weight: 800;
+      line-height: 1;
+      margin: 8px 0;
+      color: var(--color-brand);
+    }
+
+    .current-card .weather-stats {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 8px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .mortality-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .metric-box {
+      background: #1c2541;
+      border: 1px solid #2e3d5b;
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .metric-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .metric-val {
+      font-size: 1.35rem;
+      font-weight: 800;
+      margin: 4px 0 2px;
+      color: #ffffff;
+    }
+
+    .metric-sub {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .metric-badge {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      margin-top: 4px;
+      text-align: center;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: #273549;
+      border-radius: 3px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    /* Recommendation Trigger Button */
+    .rec-action-bar {
+      margin: 14px 0;
+      display: flex;
+      gap: 10px;
+      flex-direction: column;
+    }
+
+    .btn-recommendations {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      color: white;
+      border: 1px solid #38bdf8;
+      border-radius: 8px;
+      padding: 12px 18px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
+      transition: all 0.2s;
+    }
+
+    .btn-recommendations:hover {
+      background: linear-gradient(135deg, #0369a1, #075985);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(2, 132, 199, 0.5);
+    }
+
+    /* Recommendation Container */
+    .recommendations-panel {
+      background: #141c30;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 16px;
+      margin-top: 14px;
+      display: none;
+    }
+
+    .rec-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .rec-header h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--color-brand);
+    }
+
+    .audience-tabs {
+      display: flex;
+      gap: 6px;
+    }
+
+    .aud-tab {
+      padding: 5px 10px;
+      background: #1c2541;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .aud-tab.active {
+      background: var(--color-brand);
+      color: #070d1e;
+      font-weight: 700;
+      border-color: var(--color-brand);
+    }
+
+    .insights-list {
+      background: #0b132b;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 14px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .insight-item {
+      font-size: 0.82rem;
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      line-height: 1.4;
+    }
+
+    .insight-tag {
+      font-size: 0.7rem;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+      text-transform: uppercase;
+    }
+    .insight-tag.HIGH { background: #7f1d1d; color: #fca5a5; }
+    .insight-tag.MEDIUM { background: #78350f; color: #fde68a; }
+    .insight-tag.LOW { background: #064e3b; color: #6ee7b7; }
+
+    .rec-cards-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .rec-card-item {
+      background: #1c2541;
+      border-left: 4px solid var(--color-brand);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 14px;
+    }
+    .rec-card-item.priority-1 { border-left-color: #ef4444; }
+    .rec-card-item.priority-2 { border-left-color: #f59e0b; }
+    .rec-card-item.priority-3 { border-left-color: #10b981; }
+
+    .rec-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .rec-cat-badge {
+      font-size: 0.72rem;
+      font-weight: 800;
+      color: var(--color-brand);
+      text-transform: uppercase;
+    }
+
+    .rec-source-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: #0b132b;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-muted);
+    }
+
+    .rec-action-text {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #f8fafc;
+      margin: 4px 0;
+      line-height: 1.4;
+    }
+
+    .rec-reason-text {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .forecast {
+      display: grid;
+      gap: 7px;
+    }
+
+    .forecast-row {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 9px 12px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr 1.1fr 1fr;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.84rem;
+    }
+
+    .forecast-row time {
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+
+    .forecast-row .wbgt-val {
+      font-weight: 700;
+      color: var(--color-brand);
+    }
+
+    .forecast-row .mri-badge {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .forecast-row .rr-text {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      text-align: right;
+    }
+
+    .legend {
+      display: grid;
+      gap: 5px;
+      font-size: 0.78rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      min-width: 110px;
+      text-align: center;
+    }
+
+    .badge.low, .metric-badge.low, .mri-badge.low { background: #064e3b; color: #6ee7b7; border: 1px solid #059669; }
+    .badge.moderate, .metric-badge.moderate, .mri-badge.moderate { background: #78350f; color: #fde68a; border: 1px solid #d97706; }
+    .badge.high, .metric-badge.high, .mri-badge.high { background: #7c2d12; color: #fed7aa; border: 1px solid #ea580c; }
+    .badge.very-high, .metric-badge.very-high, .mri-badge.very-high { background: #7f1d1d; color: #fca5a5; border: 1px solid #dc2626; }
+    .badge.extreme, .metric-badge.extreme, .mri-badge.extreme { background: #450a0a; color: #fecaca; border: 1px solid #ef4444; }
+
+    .marker-bubble {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 800;
+      font-size: 0.78rem;
+      border: 2px solid white;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+
+    .marker-bubble:hover {
+      transform: scale(1.18);
+    }
+
+    @media (max-width: 920px) {
+      main {
+        grid-template-columns: 1fr;
+        padding: 10px;
+      }
+      #map {
+        height: 48vh;
+        min-height: 360px;
+      }
+      .search-box {
+        align-items: stretch;
+        width: 100%;
+      }
+      .search-box input {
+        min-width: 0;
+        flex: 1;
+      }
+    }
+  </style>
 </head>
 <body>
-  <header><div><p class="eyebrow">EXTREME HEAT EARLY WARNING</p><h1>Live WBGT GIS</h1></div><p id="updated">Loading live weather…</p></header>
+  <header>
+    <div>
+      <p class="eyebrow">SIH PROBLEM STATEMENT 26083 · EXTREME HEAT EARLY WARNING</p>
+      <h1>Human Thermal Stress & Mortality Risk GIS</h1>
+    </div>
+    <div class="search-box">
+      <form id="search-form" onsubmit="event.preventDefault(); handleSearch();">
+        <input type="text" id="city-search" placeholder="Search ANY city (e.g. Pune, Jaipur, Kochi, Lucknow)..." autocomplete="off" />
+        <button type="submit">Search City</button>
+      </form>
+      <p id="updated">Fetching live weather…</p>
+    </div>
+  </header>
+
   <main>
-    <section class="map-panel"><div id="map" aria-label="Interactive city WBGT map"></div><p class="map-help">Click a city marker to view its live WBGT and five-day forecast.</p></section>
+    <section class="map-panel">
+      <div id="map" aria-label="Interactive city WBGT and mortality risk map"></div>
+      <div class="quick-cities-bar">
+        <span class="quick-label">Explore Cities:</span>
+        <div class="chips-list">
+          <button type="button" class="chip" onclick="searchCity('Pune')">Pune</button>
+          <button type="button" class="chip" onclick="searchCity('Mumbai')">Mumbai</button>
+          <button type="button" class="chip" onclick="searchCity('Delhi')">Delhi</button>
+          <button type="button" class="chip" onclick="searchCity('Jaipur')">Jaipur</button>
+          <button type="button" class="chip" onclick="searchCity('Nagpur')">Nagpur</button>
+          <button type="button" class="chip" onclick="searchCity('Kochi, India')">Kochi</button>
+          <button type="button" class="chip" onclick="searchCity('Ahmedabad')">Ahmedabad</button>
+          <button type="button" class="chip" onclick="searchCity('Hyderabad')">Hyderabad</button>
+          <button type="button" class="chip" onclick="searchCity('Bhopal')">Bhopal</button>
+          <button type="button" class="chip" onclick="searchCity('Kolkata')">Kolkata</button>
+          <button type="button" class="chip" onclick="searchCity('Chennai')">Chennai</button>
+          <button type="button" class="chip" onclick="searchCity('Lucknow')">Lucknow</button>
+          <button type="button" class="chip" onclick="searchCity('Patna')">Patna</button>
+        </div>
+      </div>
+    </section>
+
     <aside class="details-panel">
-      <p class="eyebrow" id="place">SELECT A CITY</p><div id="current" class="current-card"><p>Loading…</p></div>
-      <h2>5-day peak forecast</h2><div id="forecast" class="forecast"></div>
-      <h2>WBGT flag guide</h2>
-      <div class="legend"><span class="flag white">White &lt; 27.8°C</span><span class="flag green">Green 27.8–29.4°C</span><span class="flag yellow">Yellow 29.5–31.0°C</span><span class="flag red">Red 31.1–32.1°C</span><span class="flag black">Black ≥ 32.2°C</span></div>
+      <div class="panel-header">
+        <p class="eyebrow" id="place">SELECT A CITY</p>
+        <p class="subtitle" id="region-info">Click any marker or search above</p>
+      </div>
+
+      <div id="current" class="current-card">
+        <p>Loading live observations…</p>
+      </div>
+
+      <h2>Epidemiological Mortality Risk (Cheng et al. 2019)</h2>
+      <div id="mortality-metrics" class="mortality-card">
+        <div class="metric-row">
+          <div class="metric-box">
+            <span class="metric-label">Mortality Risk Index (MRI)</span>
+            <span class="metric-val" id="mri-val">—</span>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="mri-bar" style="width: 0%;"></div></div>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Relative Risk (RR)</span>
+            <span class="metric-val" id="rr-val">—</span>
+            <span class="metric-sub" id="rr-sub">Ref: 30.0°C baseline</span>
+          </div>
+        </div>
+        <div class="metric-row">
+          <div class="metric-box">
+            <span class="metric-label">Attributable Fraction (AF)</span>
+            <span class="metric-val" id="af-val">—</span>
+            <span class="metric-sub" id="af-sub">Heat-attributable excess risk</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Health Risk Tier</span>
+            <span class="metric-badge" id="category-badge">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recommendation Action Button -->
+      <div class="rec-action-bar">
+        <button type="button" class="btn-recommendations" onclick="toggleRecommendations()">
+          <span>💡</span> <span id="rec-btn-text">Get AI Heat-Health Recommendations</span>
+        </button>
+      </div>
+
+      <!-- Dynamic Recommendations Panel -->
+      <div id="recommendations-container" class="recommendations-panel">
+        <div class="rec-header">
+          <h3>Evidence-Guided Heat Health Guidance</h3>
+          <div class="audience-tabs">
+            <button type="button" class="aud-tab active" onclick="switchAudience('PUBLIC')">Public</button>
+            <button type="button" class="aud-tab" onclick="switchAudience('OUTDOOR_WORKER')">Workers</button>
+            <button type="button" class="aud-tab" onclick="switchAudience('AUTHORITY')">Authorities</button>
+          </div>
+        </div>
+
+        <div id="rec-insights" class="insights-list">
+          <!-- Insights populated dynamically -->
+        </div>
+
+        <div id="rec-cards" class="rec-cards-list">
+          <!-- Recommendations populated dynamically -->
+        </div>
+      </div>
+
+      <h2>5-Day Peak Heat & Mortality Forecast</h2>
+      <div id="forecast" class="forecast"></div>
+
+      <h2>Scientific Health Risk Scale</h2>
+      <div class="legend">
+        <div class="legend-item"><span class="badge low">Low (MRI &lt; 30)</span><span>Baseline (WBGT &le; 28°C, RR = 1.0, AF = 0%)</span></div>
+        <div class="legend-item"><span class="badge moderate">Moderate (30–54)</span><span>Elevated (WBGT 28–31.5°C, RR 1.00–1.04)</span></div>
+        <div class="legend-item"><span class="badge high">High (55–69)</span><span>Warning (WBGT 31.5–33°C, RR 1.04–1.09)</span></div>
+        <div class="legend-item"><span class="badge very-high">Very High (70–84)</span><span>Threshold Exceeded (WBGT &ge; 33°C, RR &ge; 1.09)</span></div>
+        <div class="legend-item"><span class="badge extreme">Extreme (&ge; 85)</span><span>Severe Danger (WBGT &ge; 35°C, RR &gt; 1.22)</span></div>
+      </div>
     </aside>
   </main>
-  <template id="forecast-row"><article class="forecast-row"><time></time><strong></strong><span></span></article></template>
+
+  <template id="forecast-row">
+    <article class="forecast-row">
+      <div class="forecast-date">
+        <time></time>
+      </div>
+      <div class="forecast-wbgt">
+        <span class="wbgt-val"></span>
+      </div>
+      <div class="forecast-mri">
+        <span class="mri-badge"></span>
+      </div>
+      <div class="forecast-rr">
+        <span class="rr-text"></span>
+      </div>
+    </article>
+  </template>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="app.js"></script>
+  <script>
+    const defaultCities = [
+      { name: "Pune", query: "Pune", lat: 18.5196, lon: 73.8554 },
+      { name: "Mumbai", query: "Mumbai", lat: 19.0760, lon: 72.8777 },
+      { name: "Delhi", query: "Delhi", lat: 28.6139, lon: 77.2090 },
+      { name: "Jaipur", query: "Jaipur", lat: 26.9124, lon: 75.7873 },
+      { name: "Nagpur", query: "Nagpur", lat: 21.1458, lon: 79.0882 },
+      { name: "Kochi", query: "Kochi, India", lat: 9.9399, lon: 76.2602 },
+      { name: "Ahmedabad", query: "Ahmedabad", lat: 23.0225, lon: 72.5714 },
+      { name: "Hyderabad", query: "Hyderabad", lat: 17.3850, lon: 78.4867 },
+      { name: "Bhopal", query: "Bhopal", lat: 23.2599, lon: 77.4126 },
+      { name: "Kolkata", query: "Kolkata", lat: 22.5726, lon: 88.3639 },
+      { name: "Chennai", query: "Chennai", lat: 13.0827, lon: 80.2707 },
+      { name: "Lucknow", query: "Lucknow", lat: 26.8467, lon: 80.9462 },
+      { name: "Patna", query: "Patna", lat: 25.5941, lon: 85.1376 },
+    ];
+
+    const categoryColors = {
+      Low: "#10b981",
+      Moderate: "#f59e0b",
+      High: "#f97316",
+      "Very High": "#ef4444",
+      Extreme: "#dc2626"
+    };
+
+    const map = L.map("map", { zoomControl: true }).setView([21.5, 78.9], 5);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: "© OpenStreetMap contributors | Open-Meteo"
+    }).addTo(map);
+
+    const markers = new Map();
+    let currentSelectedCity = null;
+    let currentAudience = "PUBLIC";
+    let recommendationsOpen = false;
+
+    function getCategoryClass(category) {
+      if (!category) return "low";
+      return category.toLowerCase().replace(/\s+/g, "-");
+    }
+
+    function createMarkerIcon(riskCategory, wbgt) {
+      const color = categoryColors[riskCategory] || "#38bdf8";
+      const label = wbgt != null ? `${wbgt.toFixed(1)}°` : "—";
+      return L.divIcon({
+        className: "custom-map-icon",
+        iconSize: [38, 38],
+        iconAnchor: [19, 19],
+        html: `<div class="marker-bubble" style="background:${color};" title="${riskCategory || 'Unknown'}">
+          <span>${label}</span>
+        </div>`
+      });
+    }
+
+    function celsius(val) {
+      return val == null ? "—" : `${Number(val).toFixed(1)}°C`;
+    }
+
+    function renderDetails(payload) {
+      const loc = payload.location;
+      const curr = payload.current;
+      const forecast = payload.forecast || [];
+
+      // 1. Header Location
+      document.querySelector("#place").textContent = `${loc.city.toUpperCase()} · LIVE OBSERVATION`;
+      const regionParts = [loc.admin1, loc.country, `(${loc.latitude.toFixed(2)}°N, ${loc.longitude.toFixed(2)}°E)`].filter(Boolean);
+      document.querySelector("#region-info").textContent = regionParts.join(", ");
+      document.querySelector("#updated").textContent = `Last updated: ${new Date().toLocaleTimeString()} · Updates every 5m`;
+
+      // 2. Current WBGT Card
+      const currentCard = document.querySelector("#current");
+      if (curr.wbgt == null) {
+        currentCard.innerHTML = `<h3>Current Observation</h3><p>Observation data currently unavailable for this point.</p>`;
+      } else {
+        currentCard.innerHTML = `
+          <h3>
+            <span>Outdoor WBGT (Liljegren Model)</span>
+            <span class="metric-badge ${getCategoryClass(curr.riskCategory)}">${curr.riskCategory} Risk</span>
+          </h3>
+          <div class="wbgt-display">${celsius(curr.wbgt)}</div>
+          <div class="weather-stats">
+            <span><strong>Air Temp:</strong> ${celsius(curr.temperature_c)}</span>
+            <span><strong>Humidity:</strong> ${curr.relative_humidity_pct ?? "—"}%</span>
+            <span><strong>Wind:</strong> ${curr.wind_speed_ms != null ? curr.wind_speed_ms.toFixed(1) + " m/s" : "—"}</span>
+            <span><strong>Solar:</strong> ${curr.shortwave_radiation_wm2 != null ? curr.shortwave_radiation_wm2.toFixed(0) + " W/m²" : "—"}</span>
+          </div>
+        `;
+      }
+
+      // 3. Epidemiological Mortality Metrics Card
+      const mriVal = curr.mortalityRiskIndex != null ? curr.mortalityRiskIndex.toFixed(1) : "—";
+      const rrVal = curr.relativeRisk != null ? curr.relativeRisk.toFixed(3) : "—";
+      const afVal = curr.attributableFraction != null ? `${(curr.attributableFraction * 100).toFixed(1)}%` : "0.0%";
+      const cat = curr.riskCategory || "Low";
+
+      document.querySelector("#mri-val").textContent = `${mriVal} / 100`;
+      const mriPercent = Math.min(100, Math.max(0, curr.mortalityRiskIndex || 0));
+      const mriBar = document.querySelector("#mri-bar");
+      mriBar.style.width = `${mriPercent}%`;
+      mriBar.style.backgroundColor = categoryColors[cat] || "#38bdf8";
+
+      document.querySelector("#rr-val").textContent = rrVal;
+      const isAboveBaseline = curr.wbgt != null && curr.wbgt > 30.0;
+      const excessPct = curr.relativeRisk != null && curr.relativeRisk > 1.0 
+        ? `+${((curr.relativeRisk - 1) * 100).toFixed(1)}% excess risk over baseline` 
+        : "Baseline risk (WBGT ≤ 30°C)";
+      document.querySelector("#rr-sub").textContent = excessPct;
+
+      document.querySelector("#af-val").textContent = afVal;
+      document.querySelector("#af-sub").textContent = isAboveBaseline ? "Attributable to heat > 30°C" : "0.0% (below 30°C threshold)";
+
+      const catBadge = document.querySelector("#category-badge");
+      catBadge.textContent = cat;
+      catBadge.className = `metric-badge ${getCategoryClass(cat)}`;
+
+      // 4. 5-Day Forecast
+      const forecastContainer = document.querySelector("#forecast");
+      forecastContainer.replaceChildren();
+
+      forecast.forEach(day => {
+        const row = document.querySelector("#forecast-row").content.cloneNode(true);
+        const dateObj = new Date(`${day.date}T00:00:00Z`);
+        const dateStr = dateObj.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+        
+        row.querySelector("time").textContent = dateStr;
+        row.querySelector(".wbgt-val").textContent = celsius(day.wbgt);
+        
+        const mriBadge = row.querySelector(".mri-badge");
+        mriBadge.textContent = `MRI ${day.mortalityRiskIndex != null ? day.mortalityRiskIndex.toFixed(0) : "—"} · ${day.riskCategory}`;
+        mriBadge.className = `mri-badge ${getCategoryClass(day.riskCategory)}`;
+
+        const rrText = row.querySelector(".rr-text");
+        const afText = day.attributableFraction != null && day.attributableFraction > 0 ? ` (AF ${(day.attributableFraction * 100).toFixed(1)}%)` : "";
+        rrText.textContent = day.relativeRisk != null ? `RR ${day.relativeRisk.toFixed(3)}${afText}` : "—";
+
+        forecastContainer.append(row);
+      });
+
+      // If recommendations are open, refresh them for current city
+      if (recommendationsOpen && currentSelectedCity) {
+        fetchAndRenderRecommendations(currentSelectedCity, currentAudience);
+      }
+    }
+
+    async function selectCityByQuery(query, updateMap = true) {
+      document.querySelector("#place").textContent = `FETCHING ${query.toUpperCase()}…`;
+      try {
+        const response = await fetch(`/api/heat-risk?city=${encodeURIComponent(query)}`);
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || "Failed to fetch heat risk data");
+        }
+        const payload = await response.json();
+        currentSelectedCity = payload.location.city;
+
+        // Update / place marker on map
+        const lat = payload.location.latitude;
+        const lon = payload.location.longitude;
+        const key = payload.location.city;
+
+        let marker = markers.get(key);
+        if (!marker) {
+          marker = L.marker([lat, lon], {
+            icon: createMarkerIcon(payload.current.riskCategory, payload.current.wbgt)
+          }).addTo(map);
+          marker.on("click", () => renderDetails(payload));
+          markers.set(key, marker);
+        } else {
+          marker.setIcon(createMarkerIcon(payload.current.riskCategory, payload.current.wbgt));
+        }
+
+        marker.bindPopup(`
+          <div style="font-family:sans-serif; text-align:center;">
+            <strong>${payload.location.city}</strong><br/>
+            WBGT: <strong>${celsius(payload.current.wbgt)}</strong><br/>
+            Mortality Risk: <span style="color:${categoryColors[payload.current.riskCategory] || '#333'}; font-weight:bold;">${payload.current.riskCategory}</span>
+          </div>
+        `);
+
+        renderDetails(payload);
+
+        if (updateMap) {
+          map.flyTo([lat, lon], 8, { duration: 1.2 });
+          marker.openPopup();
+        }
+      } catch (error) {
+        document.querySelector("#current").innerHTML = `
+          <h3>Update Failed</h3>
+          <p style="color:#ef4444;">${error.message}</p>
+        `;
+        document.querySelector("#updated").textContent = "Could not fetch city";
+      }
+    }
+
+    async function fetchAndRenderRecommendations(city, audience) {
+      const recContainer = document.querySelector("#recommendations-container");
+      const insightsList = document.querySelector("#rec-insights");
+      const cardsList = document.querySelector("#rec-cards");
+
+      insightsList.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">Synthesizing risk insights for ${city}…</p>`;
+      cardsList.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">Loading evidence-based recommendations…</p>`;
+
+      try {
+        const res = await fetch(`/api/recommendations?city=${encodeURIComponent(city)}&audience=${encodeURIComponent(audience)}`);
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to load recommendations");
+        }
+        const data = await res.json();
+
+        // Render Insights
+        insightsList.replaceChildren();
+        if (data.insights && data.insights.length > 0) {
+          data.insights.forEach(ins => {
+            const div = document.createElement("div");
+            div.className = "insight-item";
+            div.innerHTML = `<span class="insight-tag ${ins.priority}">${ins.type.replace(/_/g, " ")}</span> <span>${ins.message}</span>`;
+            insightsList.appendChild(div);
+          });
+        }
+
+        // Render Recommendations
+        cardsList.replaceChildren();
+        if (data.recommendations && data.recommendations.length > 0) {
+          data.recommendations.forEach(rec => {
+            const card = document.createElement("div");
+            card.className = `rec-card-item priority-${rec.priority}`;
+            card.innerHTML = `
+              <div class="rec-card-top">
+                <span class="rec-cat-badge">${rec.category.replace(/_/g, " ")} · Priority ${rec.priority}</span>
+                <span class="rec-source-badge">${rec.source}</span>
+              </div>
+              <div class="rec-action-text">${rec.recommendation}</div>
+              <div class="rec-reason-text"><strong>Why:</strong> ${rec.reason}</div>
+            `;
+            cardsList.appendChild(card);
+          });
+        } else {
+          cardsList.innerHTML = `<p style="color:#94a3b8;">No immediate high-severity interventions required for baseline conditions.</p>`;
+        }
+      } catch (err) {
+        cardsList.innerHTML = `<p style="color:#ef4444;">Error loading recommendations: ${err.message}</p>`;
+      }
+    }
+
+    function toggleRecommendations() {
+      const container = document.querySelector("#recommendations-container");
+      const btnText = document.querySelector("#rec-btn-text");
+      recommendationsOpen = !recommendationsOpen;
+
+      if (recommendationsOpen) {
+        container.style.display = "block";
+        btnText.textContent = "Hide Heat-Health Recommendations";
+        if (currentSelectedCity) {
+          fetchAndRenderRecommendations(currentSelectedCity, currentAudience);
+        }
+      } else {
+        container.style.display = "none";
+        btnText.textContent = "Get AI Heat-Health Recommendations";
+      }
+    }
+
+    function switchAudience(aud) {
+      currentAudience = aud;
+      document.querySelectorAll(".aud-tab").forEach(tab => {
+        tab.classList.toggle("active", tab.textContent.toUpperCase().includes(aud === "OUTDOOR_WORKER" ? "WORKER" : aud));
+      });
+      if (currentSelectedCity) {
+        fetchAndRenderRecommendations(currentSelectedCity, currentAudience);
+      }
+    }
+
+    function searchCity(name) {
+      const searchInput = document.querySelector("#city-search");
+      if (searchInput) searchInput.value = name;
+      selectCityByQuery(name, true);
+    }
+
+    function handleSearch() {
+      const query = document.querySelector("#city-search").value.trim();
+      if (query) {
+        selectCityByQuery(query, true);
+      }
+    }
+
+    // Initialize default city markers on the map
+    async function initDashboard() {
+      defaultCities.forEach(city => {
+        const marker = L.marker([city.lat, city.lon], {
+          icon: createMarkerIcon("Low", null)
+        }).addTo(map).bindTooltip(city.name);
+
+        marker.on("click", () => selectCityByQuery(city.query || city.name, false));
+        markers.set(city.name, marker);
+      });
+
+      // Load first city (Pune) into view
+      await selectCityByQuery(defaultCities[0].query, false);
+
+      // Background refresh markers with live values
+      for (const city of defaultCities) {
+        try {
+          const res = await fetch(`/api/heat-risk?city=${encodeURIComponent(city.query || city.name)}`);
+          if (res.ok) {
+            const data = await res.json();
+            const m = markers.get(city.name);
+            if (m) {
+              m.setIcon(createMarkerIcon(data.current.riskCategory, data.current.wbgt));
+              m.bindPopup(`
+                <div style="font-family:sans-serif; text-align:center;">
+                  <strong>${data.location.city}</strong><br/>
+                  WBGT: <strong>${celsius(data.current.wbgt)}</strong><br/>
+                  Mortality Risk: <span style="color:${categoryColors[data.current.riskCategory] || '#333'}; font-weight:bold;">${data.current.riskCategory}</span>
+                </div>
+              `);
+            }
+          }
+        } catch (e) {
+          console.warn("Could not preload marker for", city.name, e);
+        }
+      }
+    }
+
+    initDashboard();
+
+    // 5-minute auto refresh
+    setInterval(() => {
+      if (currentSelectedCity) {
+        selectCityByQuery(currentSelectedCity, false);
+      }
+    }, 5 * 60 * 1000);
+  </script>
 </body>
 </html>

@@ -1,15 +1,30 @@
-"""Open-Meteo ingestion and Liljegren (2008) outdoor WBGT calculations.
+"""Open-Meteo ingestion and Liljegren (2008) outdoor WBGT calculations with epidemiological mortality risk.
 
 Heat/mass-transfer portions port Argonne's reference ``wbgt.c``. NOAA solar
 position and log-profile wind adjustment are the two documented substitutions
 needed for Open-Meteo data.
+
+Epidemiological Mortality Risk reference:
+Cheng, Lung, Hwang (2019) Environmental Research, 169, 180-189.
 """
 import json
 import math
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
+
+from geocoding import geocode_city
+from mortality_risk import (
+    REFERENCE_WBGT_C,
+    THRESHOLD_WBGT_C,
+    calculate_attributable_fraction,
+    calculate_mortality_risk_index,
+    calculate_relative_risk,
+    classify_risk_category,
+    evaluate_mortality_risk,
+)
 
 DEFAULT_ENV_PATH = ".env"
 CURRENT_FIELDS = ["temperature_2m", "relative_humidity_2m", "wind_speed_10m", "surface_pressure", "shortwave_radiation"]
@@ -221,13 +236,14 @@ def calculate_liljegren_outdoor_wbgt(temperature_c, relative_humidity, wind_spee
     tnwb = _natural_wet_bulb(tk, rh, float(surface_pressure_hpa), speed, solar, fdir, cza)
     tglobe = _globe_temperature(tk, rh, float(surface_pressure_hpa), speed, solar, fdir, cza)
     converged = tnwb is not None and tglobe is not None
+    wbgt_c = .7 * tnwb + .2 * tglobe + .1 * float(temperature_c) if converged else None
     return {"tnwb_c": tnwb, "tglobe_c": tglobe,
-            "wbgt_c": .7 * tnwb + .2 * tglobe + .1 * float(temperature_c) if converged else None,
+            "wbgt_c": wbgt_c,
             "converged": converged}
 
 
 def risk_category(wbgt_c):
-    """Display flag thresholds from the supplied outdoor WBGT chart (°C)."""
+    """Display physical flag thresholds from the supplied outdoor WBGT chart (°C)."""
     if wbgt_c is None: return None
     if wbgt_c < 27.8: return "White"
     if wbgt_c < 29.5: return "Green"
@@ -237,7 +253,7 @@ def risk_category(wbgt_c):
 
 
 def calculate_hourly_wbgt(data, latitude=None, longitude=None, roughness_length=.1):
-    """Return every Open-Meteo hour as an output-contract WBGT record."""
+    """Return every Open-Meteo hour as an output-contract WBGT record with epidemiological risk."""
     latitude = data.get("latitude") if latitude is None else latitude
     longitude = data.get("longitude") if longitude is None else longitude
     validate_location(latitude, longitude)
@@ -251,9 +267,25 @@ def calculate_hourly_wbgt(data, latitude=None, longitude=None, roughness_length=
         except (IndexError, KeyError, TypeError, ValueError):
             tair = rh = wind = solar = None
             result = {"tnwb_c": None, "tglobe_c": None, "wbgt_c": None, "converged": False}
-        record = {"lat": latitude, "lon": longitude, "time": _parse_utc(timestamp).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                  "tair_c": tair, "rh_pct": rh, "wind_ms": wind, "solar_wm2": solar, **result}
-        record["risk"] = risk_category(result["wbgt_c"])
+        
+        wbgt_val = result["wbgt_c"]
+        epi_risk = evaluate_mortality_risk(wbgt_val)
+        
+        record = {
+            "lat": latitude,
+            "lon": longitude,
+            "time": _parse_utc(timestamp).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tair_c": tair,
+            "rh_pct": rh,
+            "wind_ms": wind,
+            "solar_wm2": solar,
+            **result,
+            "risk": risk_category(wbgt_val),  # Flag color for UI compatibility
+            "relative_risk": epi_risk["relativeRisk"],
+            "attributable_fraction": epi_risk["attributableFraction"],
+            "mortality_risk_index": epi_risk["mortalityRiskIndex"],
+            "epidemiological_risk_category": epi_risk["riskCategory"]
+        }
         output.append(record)
     return output
 
@@ -262,7 +294,7 @@ def daily_max_wbgt(hourly_series):
     """Return peak valid WBGT record for each GMT/UTC calendar day."""
     maxima = {}
     for item in hourly_series:
-        if item["wbgt_c"] is not None:
+        if item.get("wbgt_c") is not None:
             day = item["time"][:10]
             if day not in maxima or item["wbgt_c"] > maxima[day]["wbgt_c"]:
                 maxima[day] = item
@@ -270,7 +302,7 @@ def daily_max_wbgt(hourly_series):
 
 
 def calculate_current_wbgt(data, latitude=None, longitude=None, roughness_length=.1):
-    """Return the latest Open-Meteo current observation in the hourly contract."""
+    """Return the latest Open-Meteo current observation in the hourly contract with mortality risk."""
     latitude = data.get("latitude") if latitude is None else latitude
     longitude = data.get("longitude") if longitude is None else longitude
     validate_location(latitude, longitude)
@@ -286,9 +318,25 @@ def calculate_current_wbgt(data, latitude=None, longitude=None, roughness_length
     except (KeyError, TypeError, ValueError):
         result = {"tnwb_c": None, "tglobe_c": None, "wbgt_c": None, "converged": False}
         tair = rh = wind = solar = None
-    return {"lat": latitude, "lon": longitude, "time": _parse_utc(current.get("time", "1970-01-01T00:00")).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "tair_c": tair, "rh_pct": rh, "wind_ms": wind, "solar_wm2": solar, **result,
-            "risk": risk_category(result["wbgt_c"])}
+    
+    wbgt_val = result["wbgt_c"]
+    epi_risk = evaluate_mortality_risk(wbgt_val)
+
+    return {
+        "lat": latitude,
+        "lon": longitude,
+        "time": _parse_utc(current.get("time", "1970-01-01T00:00")).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "tair_c": tair,
+        "rh_pct": rh,
+        "wind_ms": wind,
+        "solar_wm2": solar,
+        **result,
+        "risk": risk_category(wbgt_val),  # Physical flag color
+        "relative_risk": epi_risk["relativeRisk"],
+        "attributable_fraction": epi_risk["attributableFraction"],
+        "mortality_risk_index": epi_risk["mortalityRiskIndex"],
+        "epidemiological_risk_category": epi_risk["riskCategory"]
+    }
 
 
 def build_dashboard_payload(data, latitude=None, longitude=None, roughness_length=.1):
@@ -296,6 +344,95 @@ def build_dashboard_payload(data, latitude=None, longitude=None, roughness_lengt
     hourly = calculate_hourly_wbgt(data, latitude, longitude, roughness_length)
     return {"current": calculate_current_wbgt(data, latitude, longitude, roughness_length),
             "hourly": hourly, "daily_max_wbgt": daily_max_wbgt(hourly)}
+
+
+def fetch_heat_risk_for_coordinates(
+    latitude: float,
+    longitude: float,
+    city_name: Optional[str] = None,
+    forecast_days: int = 5,
+    location_meta: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Execute the end-to-end pipeline for arbitrary coordinates and return the clean API response contract."""
+    validate_location(latitude, longitude)
+    raw_weather = fetch_weather_snapshot(latitude=latitude, longitude=longitude, forecast_days=forecast_days)
+    hourly = calculate_hourly_wbgt(raw_weather, latitude, longitude)
+    current = calculate_current_wbgt(raw_weather, latitude, longitude)
+    daily_maxima = daily_max_wbgt(hourly)
+
+    # Current conditions block conforming to Section 19 contract
+    current_wbgt = current.get("wbgt_c")
+    current_epi = evaluate_mortality_risk(current_wbgt)
+    current_payload = {
+        "wbgt": current_epi["wbgt"],
+        "relativeRisk": current_epi["relativeRisk"],
+        "attributableFraction": current_epi["attributableFraction"],
+        "mortalityRiskIndex": current_epi["mortalityRiskIndex"],
+        "riskCategory": current_epi["riskCategory"],
+        "flag": current.get("risk"),
+        "temperature_c": current.get("tair_c"),
+        "relative_humidity_pct": current.get("rh_pct"),
+        "wind_speed_ms": current.get("wind_ms"),
+        "shortwave_radiation_wm2": current.get("solar_wm2"),
+        "time": current.get("time"),
+        "converged": current.get("converged", False)
+    }
+
+    # Forecast array conforming to Section 19 contract
+    forecast_payload = []
+    for item in daily_maxima:
+        wbgt_val = item.get("wbgt_c")
+        epi = evaluate_mortality_risk(wbgt_val)
+        forecast_payload.append({
+            "date": item["time"][:10],
+            "time": item["time"],
+            "wbgt": epi["wbgt"],
+            "relativeRisk": epi["relativeRisk"],
+            "attributableFraction": epi["attributableFraction"],
+            "mortalityRiskIndex": epi["mortalityRiskIndex"],
+            "riskCategory": epi["riskCategory"],
+            "flag": item.get("risk"),
+            "temperature_c": item.get("tair_c"),
+            "relative_humidity_pct": item.get("rh_pct"),
+            "wind_speed_ms": item.get("wind_ms"),
+            "shortwave_radiation_wm2": item.get("solar_wm2")
+        })
+
+    # Location block
+    location_block = {
+        "city": city_name or location_meta.get("city") if location_meta else f"Point({latitude}, {longitude})",
+        "latitude": latitude,
+        "longitude": longitude,
+        "country": location_meta.get("country", "") if location_meta else "",
+        "admin1": location_meta.get("admin1", "") if location_meta else "",
+        "timezone": location_meta.get("timezone", "GMT") if location_meta else "GMT"
+    }
+
+    return {
+        "location": location_block,
+        "current": current_payload,
+        "forecast": forecast_payload,
+        "methodology": {
+            "model": "Epidemiology-based estimated mortality risk",
+            "reference": "Cheng, Lung, Hwang (2019) Environmental Research 169: 180-189",
+            "wbgt_method": "Liljegren (2008) Outdoor WBGT",
+            "reference_exposure_wbgt_c": REFERENCE_WBGT_C,
+            "threshold_wbgt_c": THRESHOLD_WBGT_C,
+            "disclaimer": "Research-based risk model estimating heat-associated relative mortality risk. Not exact local death predictions."
+        }
+    }
+
+
+def fetch_heat_risk_for_city(city_name: str, forecast_days: int = 5) -> Dict[str, Any]:
+    """Execute the end-to-end pipeline dynamically for ANY city worldwide."""
+    location_meta = geocode_city(city_name)
+    return fetch_heat_risk_for_coordinates(
+        latitude=location_meta["latitude"],
+        longitude=location_meta["longitude"],
+        city_name=location_meta["city"],
+        forecast_days=forecast_days,
+        location_meta=location_meta
+    )
 
 
 def forecast_window_summary(data, requested_days):
@@ -312,13 +449,23 @@ def preview_window(data, limit=5):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Fetch Open-Meteo data and calculate outdoor Liljegren WBGT.")
-    parser.add_argument("--lat", type=float); parser.add_argument("--lon", type=float)
-    parser.add_argument("--days", type=int, default=5); parser.add_argument("--env", default=DEFAULT_ENV_PATH)
+    parser = argparse.ArgumentParser(description="Fetch Open-Meteo data, calculate Liljegren WBGT and epidemiological mortality risk.")
+    parser.add_argument("--city", type=str, help="Any valid city name (e.g. Pune, Jaipur, Tokyo)")
+    parser.add_argument("--lat", type=float, help="Latitude")
+    parser.add_argument("--lon", type=float, help="Longitude")
+    parser.add_argument("--days", type=int, default=5, help="Forecast days")
+    parser.add_argument("--env", default=DEFAULT_ENV_PATH)
     args = parser.parse_args()
-    if (args.lat is None) != (args.lon is None): parser.error("Both --lat and --lon must be provided together.")
-    data = fetch_weather_snapshot(args.env, args.lat, args.lon, args.days)
-    lat = args.lat if args.lat is not None else float(parse_api_url(load_api_url(args.env))["latitude"])
-    lon = args.lon if args.lon is not None else float(parse_api_url(load_api_url(args.env))["longitude"])
-    series = calculate_hourly_wbgt(data, lat, lon)
-    print(json.dumps({"hourly_wbgt": series, "daily_max_wbgt": daily_max_wbgt(series), "forecast_summary": forecast_window_summary(data, args.days)}, indent=2))
+
+    if args.city:
+        result = fetch_heat_risk_for_city(args.city, args.days)
+        print(json.dumps(result, indent=2))
+    elif args.lat is not None and args.lon is not None:
+        result = fetch_heat_risk_for_coordinates(args.lat, args.lon, forecast_days=args.days)
+        print(json.dumps(result, indent=2))
+    else:
+        data = fetch_weather_snapshot(args.env, forecast_days=args.days)
+        lat = float(parse_api_url(load_api_url(args.env))["latitude"])
+        lon = float(parse_api_url(load_api_url(args.env))["longitude"])
+        series = calculate_hourly_wbgt(data, lat, lon)
+        print(json.dumps({"hourly_wbgt": series, "daily_max_wbgt": daily_max_wbgt(series), "forecast_summary": forecast_window_summary(data, args.days)}, indent=2))
