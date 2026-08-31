@@ -93,7 +93,9 @@ class WeatherApiContractTests(unittest.TestCase):
         payload = build_dashboard_payload(data)
         self.assertTrue(payload["current"]["converged"])
         self.assertEqual(len(payload["hourly"]), 1)
+        self.assertIn("ihi", payload["hourly"][0])
         self.assertEqual(len(payload["daily_max_wbgt"]), 1)
+        self.assertIn("health_impact", payload)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
+from health_impact import build_health_impact
+
 DEFAULT_ENV_PATH = ".env"
 CURRENT_FIELDS = ["temperature_2m", "relative_humidity_2m", "wind_speed_10m", "surface_pressure", "shortwave_radiation"]
 HOURLY_FIELDS = ["temperature_2m", "relative_humidity_2m", "wind_speed_10m", "shortwave_radiation", "surface_pressure"]
@@ -294,8 +296,12 @@ def calculate_current_wbgt(data, latitude=None, longitude=None, roughness_length
 def build_dashboard_payload(data, latitude=None, longitude=None, roughness_length=.1):
     """Build one API response for the live GIS dashboard."""
     hourly = calculate_hourly_wbgt(data, latitude, longitude, roughness_length)
+    health_impact = build_health_impact(hourly, latitude if latitude is not None else data.get("latitude"),
+                                        longitude if longitude is not None else data.get("longitude"))
+    for record, ihi_record in zip(hourly, health_impact["hourly_ihi"]):
+        record["ihi"] = ihi_record["ihi"]
     return {"current": calculate_current_wbgt(data, latitude, longitude, roughness_length),
-            "hourly": hourly, "daily_max_wbgt": daily_max_wbgt(hourly)}
+            "hourly": hourly, "daily_max_wbgt": daily_max_wbgt(hourly), "health_impact": health_impact}
 
 
 def forecast_window_summary(data, requested_days):
