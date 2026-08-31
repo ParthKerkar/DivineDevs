@@ -5,9 +5,9 @@ admissions.  It applies only the discrete published comparisons documented in
 the configuration below.
 """
 import json
+import math
 import os
 from collections import defaultdict
-from datetime import date
 
 
 INDIA_BOUNDS = (6.0, 37.5, 68.0, 98.5)  # South, north, west, east; coverage guard.
@@ -17,9 +17,9 @@ HOSPITAL_REFERENCE = "Agarwal AK et al. (2018), doi:10.4103/IJOEM_IJOEM_94_17"
 
 # Only these three entries have a direct published all-age all-cause estimate.
 MORTALITY_EVIDENCE = {
-    "semiarid": {"representative_city": "Delhi", "representative_zone": "Semiarid", "rr": 1.059, "lag_days": 3, "coverage": "direct"},
-    "humid_subtropical": {"representative_city": "Varanasi", "representative_zone": "Humid subtropical", "rr": 1.081, "lag_days": 4, "coverage": "direct"},
-    "tropical_wet_and_dry": {"representative_city": "Chennai", "representative_zone": "Tropical wet and dry", "rr": 1.080, "lag_days": 6, "coverage": "direct"},
+    "semiarid": {"representative_city": "Delhi", "representative_zone": "Semiarid", "effects": {"very_hot": .034, "sweltering": .059}, "lag_days": 3, "coverage": "direct"},
+    "humid_subtropical": {"representative_city": "Varanasi", "representative_zone": "Humid subtropical", "effects": {"very_hot": .064, "sweltering": .081}, "lag_days": 4, "coverage": "direct"},
+    "tropical_wet_and_dry": {"representative_city": "Chennai", "representative_zone": "Tropical wet and dry", "effects": {"very_hot": .010, "sweltering": .080}, "lag_days": 6, "coverage": "direct"},
 }
 LAG_EVIDENCE_DAYS = {"Delhi": 3, "Varanasi": 4, "Chennai": 6}
 # Explicit transfer configuration for zones outside the paper's mortality cities.
@@ -40,8 +40,32 @@ def calculate_ihi(temperature_c, relative_humidity_pct, shortwave_radiation_w_m2
     values = (temperature_c, relative_humidity_pct, shortwave_radiation_w_m2, wind_speed_ms)
     if any(value is None for value in values):
         return None
-    return (0.820 * float(temperature_c) + 0.123 * float(relative_humidity_pct)
-            + 0.004 * float(shortwave_radiation_w_m2) - 0.117 * float(wind_speed_ms) - 6.727)
+    try:
+        temperature_c, relative_humidity_pct, shortwave_radiation_w_m2, wind_speed_ms = map(float, values)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (temperature_c, relative_humidity_pct, shortwave_radiation_w_m2, wind_speed_ms)):
+        return None
+    return (0.820 * temperature_c + 0.123 * relative_humidity_pct
+            + 0.004 * shortwave_radiation_w_m2 - 0.117 * wind_speed_ms - 6.727)
+
+
+def ihi_validity(temperature_c, relative_humidity_pct, shortwave_radiation_w_m2, wind_speed_ms):
+    """Report whether inputs fall inside the IHI development ranges in the paper."""
+    named = {"temperature_c": (temperature_c, 20.0, 49.5), "relative_humidity_percent": (relative_humidity_pct, 10.0, 100.0),
+             "shortwave_radiation_w_m2": (shortwave_radiation_w_m2, 0.0, 1050.0), "wind_speed_ms": (wind_speed_ms, 0.1, 20.0)}
+    warnings = []
+    for name, (value, low, high) in named.items():
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            warnings.append(f"Missing or invalid {name}; IHI was not calculated.")
+            continue
+        if not math.isfinite(numeric):
+            warnings.append(f"Non-finite {name}; IHI was not calculated.")
+        elif not low <= numeric <= high:
+            warnings.append(f"{name}={numeric} is outside the published IHI range {low}–{high}.")
+    return {"within_published_range": not warnings, "warnings": warnings}
 
 
 def _inside_ring(longitude, latitude, ring):
@@ -119,43 +143,59 @@ def build_health_impact(hourly, latitude, longitude, days=5):
     annotated_hourly = []
     for record in hourly:
         item = dict(record)
-        item["ihi"] = calculate_ihi(item.get("tair_c"), item.get("rh_pct"), item.get("solar_wm2"), item.get("wind_ms"))
+        validity = ihi_validity(item.get("tair_c"), item.get("rh_pct"), item.get("solar_wm2"), item.get("wind_ms"))
+        item["ihi"] = (calculate_ihi(item.get("tair_c"), item.get("rh_pct"), item.get("solar_wm2"), item.get("wind_ms"))
+                       if validity["within_published_range"] else None)
+        item["ihi_validity"] = validity
         annotated_hourly.append(item)
     daily = _daily_weather(annotated_hourly)
     # The first calendar date is D0; API callers request 6 days to yield D+1…D+5.
     forecast_days = daily[1:days + 1] if len(daily) > 1 else []
     evidence_zone = zone if zone in MORTALITY_EVIDENCE else EXTRAPOLATED_PROXIES.get(zone)
     evidence = MORTALITY_EVIDENCE.get(evidence_zone)
-    coverage = "direct" if zone in MORTALITY_EVIDENCE else "extrapolated"
+    coverage = "direct" if zone in MORTALITY_EVIDENCE else "extrapolated" if evidence else "unsupported"
     mortality_forecast, hospitalization_forecast = [], []
     for item in forecast_days:
         classification = ihi_comfort_class(item["daily_max_ihi"], zone)
-        is_sweltering = classification == "sweltering"
-        rr = evidence["rr"] if is_sweltering and evidence else 1.0
-        basis = ("published sweltering-versus-comfortable comparison" if is_sweltering and evidence
-                 else "reference baseline; no published category-specific RR applied")
+        published_effect = evidence["effects"].get(classification) if evidence and classification else None
+        effect_available = published_effect is not None
+        # The paper states these are effects *per unit increase in IHI*.  A
+        # day-specific RR would require the unavailable fitted response curve
+        # and reference IHI, so it is intentionally not derived here.
+        unit_rr = 1 + published_effect if effect_available else None
+        explanation = ("Published class-specific mortality effect per 1°C IHI increase; not a day-specific death prediction."
+                       if effect_available else "No exact published mortality effect is available for this IHI class/zone; no RR was inferred.")
         mortality_forecast.append({"date": item["date"], "daily_max_ihi": item["daily_max_ihi"],
             "daily_mean_ihi": item["daily_mean_ihi"], "climate_zone": zone, "ihi_class": classification,
-            "mortality_rr": rr, "mortality_index": 100 * rr, "risk_basis": basis,
-            "is_sweltering": is_sweltering, "epidemiology_coverage": coverage,
+            "mortality_effect_available": effect_available, "mortality_effect_percent_per_ihi_c": round(100 * published_effect, 1) if effect_available else None,
+            "relative_risk_per_ihi_c": unit_rr, "mortality_index_per_ihi_c": round(100 * unit_rr, 1) if unit_rr else None,
+            "mortality_rr": None, "mortality_index": None, "mortality_level": "Elevated" if effect_available else "Unavailable",
+            "risk_basis": "published per-unit IHI effect" if effect_available else "no published class-specific effect applied",
+            "is_sweltering": classification == "sweltering", "epidemiology_coverage": coverage,
             "representative_city": evidence["representative_city"] if evidence else None,
             "representative_zone": evidence["representative_zone"] if evidence else None,
-            "is_extrapolated": coverage == "extrapolated"})
-        spike = item["tmax"] is not None and item["tmax"] >= 40.0
+            "is_extrapolated": coverage == "extrapolated", "explanation": explanation})
+        # Table 1 is the explicit comparison: >=39°C vs <38°C.  The narrative
+        # also says >=40°C; retain that conflict in metadata rather than hide it.
+        spike = item["tmax"] is not None and item["tmax"] >= 39.0
         hospitalization_forecast.append({"date": item["date"], "tmax": item["tmax"],
-            "hospitalization_spike": spike, "hospitalization_rr": 1.186 if spike else 1.0,
-            "hospitalization_stress_index": 118.6 if spike else 100.0,
-            "risk_basis": "published >=40°C comparison" if spike else "reference baseline below 40°C; no continuous RR applied"})
+            "tmax_c": item["tmax"], "hospitalization_effect_available": spike,
+            "hospitalization_spike": spike, "hospitalization_rr": 1.186 if spike else None,
+            "hospitalization_stress_index": 118.6 if spike else None,
+            "hospitalization_effect_percent": 18.6 if spike else None,
+            "hospitalization_level": "Elevated / study comparison" if spike else "Unavailable",
+            "risk_basis": "Agarwal Table 1: >=39°C vs <38°C" if spike else "outside the exact published comparison; no continuous effect inferred",
+            "explanation": "Single Gwalior tertiary-hospital comparison, not a national hospitalization model."})
     sweltering = [item["is_sweltering"] for item in mortality_forecast]
     spikes = [item["hospitalization_spike"] for item in hospitalization_forecast]
-    return {"hourly_ihi": [{"time": item.get("time"), "ihi": item["ihi"]} for item in annotated_hourly],
+    return {"hourly_ihi": [{"time": item.get("time"), "ihi_c": item["ihi"], "validity": item["ihi_validity"]} for item in annotated_hourly],
         "mortality": {"reference": MORTALITY_REFERENCE, "climate_zone": zone,
             "representative_city": evidence["representative_city"] if evidence else None,
             "representative_zone": evidence["representative_zone"] if evidence else None,
             "coverage": coverage, "is_extrapolated": coverage == "extrapolated", "forecast": mortality_forecast,
             "lag_evidence_days": evidence["lag_days"] if evidence else None,
             "lag_evidence": LAG_EVIDENCE_DAYS,
-            "sweltering_days_next_5": sum(sweltering),
+            "lag_evidence_window": "3–6 days", "sweltering_days_next_5": sum(sweltering),
             "max_ihi_next_5": max((item["daily_max_ihi"] for item in mortality_forecast if item["daily_max_ihi"] is not None), default=None),
             "longest_sweltering_run": _run_length(sweltering)},
         "hospitalization": {"reference": HOSPITAL_REFERENCE, "reference_rr": 1.186,
@@ -163,5 +203,5 @@ def build_health_impact(hourly, latitude, longitude, days=5):
             "number_of_spike_days": sum(spikes),
             "longest_spike_run": _run_length(spikes),
             "first_predicted_spike_day": next((item["date"] for item in hospitalization_forecast if item["hospitalization_spike"]), None),
-            "maximum_5_day_hospitalization_stress": max((item["hospitalization_stress_index"] for item in hospitalization_forecast), default=None),
+            "maximum_5_day_hospitalization_stress": max((item["hospitalization_stress_index"] for item in hospitalization_forecast if item["hospitalization_stress_index"] is not None), default=None),
             "vulnerability_score": None}}

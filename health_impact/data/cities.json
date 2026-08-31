@@ -1,0 +1,14 @@
+[
+  {"city_id":"delhi","city_name":"Delhi","district_name":"New Delhi","state_name":"Delhi","latitude":28.6139,"longitude":77.2090},
+  {"city_id":"varanasi","city_name":"Varanasi","district_name":"Varanasi","state_name":"Uttar Pradesh","latitude":25.3176,"longitude":82.9739},
+  {"city_id":"chennai","city_name":"Chennai","district_name":"Chennai","state_name":"Tamil Nadu","latitude":13.0827,"longitude":80.2707},
+  {"city_id":"jaisalmer","city_name":"Jaisalmer","district_name":"Jaisalmer","state_name":"Rajasthan","latitude":26.9157,"longitude":70.9083},
+  {"city_id":"kochi","city_name":"Kochi","district_name":"Ernakulam","state_name":"Kerala","latitude":9.9312,"longitude":76.2673},
+  {"city_id":"pune","city_name":"Pune","district_name":"Pune","state_name":"Maharashtra","latitude":18.5204,"longitude":73.8567},
+  {"city_id":"mumbai","city_name":"Mumbai","district_name":"Mumbai City","state_name":"Maharashtra","latitude":19.0760,"longitude":72.8777},
+  {"city_id":"kolkata","city_name":"Kolkata","district_name":"Kolkata","state_name":"West Bengal","latitude":22.5726,"longitude":88.3639},
+  {"city_id":"ahmedabad","city_name":"Ahmedabad","district_name":"Ahmedabad","state_name":"Gujarat","latitude":23.0225,"longitude":72.5714},
+  {"city_id":"bengaluru","city_name":"Bengaluru","district_name":"Bengaluru Urban","state_name":"Karnataka","latitude":12.9716,"longitude":77.5946},
+  {"city_id":"hyderabad","city_name":"Hyderabad","district_name":"Hyderabad","state_name":"Telangana","latitude":17.3850,"longitude":78.4867},
+  {"city_id":"lucknow","city_name":"Lucknow","district_name":"Lucknow","state_name":"Uttar Pradesh","latitude":26.8467,"longitude":80.9462}
+]

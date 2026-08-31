@@ -34,19 +34,31 @@ class HealthImpactTests(unittest.TestCase):
             self.assertEqual(ihi_comfort_class(very_hot + .01, zone), "sweltering")
         self.assertEqual(ihi_comfort_class(40, "mountainous"), "unsupported")
 
-    def test_published_sweltering_rr_and_mri(self):
+    def test_published_sweltering_effect_and_per_unit_index(self):
         # Daily IHI for these inputs is well above all three sweltering thresholds.
         series = [hourly_day(1, 30), hourly_day(2, 42)]
         expected = [(28.6139, 77.2090, 1.059), (25.3176, 82.9739, 1.081), (13.0827, 80.2707, 1.080)]
         for lat, lon, rr in expected:
             outcome = build_health_impact(series, lat, lon)
             day = outcome["mortality"]["forecast"][0]
-            self.assertEqual(day["mortality_rr"], rr)
-            self.assertEqual(day["mortality_index"], 100 * rr)
+            self.assertTrue(day["mortality_effect_available"])
+            self.assertEqual(day["relative_risk_per_ihi_c"], rr)
+            self.assertEqual(day["mortality_index_per_ihi_c"], round(100 * rr, 1))
+            self.assertIsNone(day["mortality_rr"])
+
+    def test_very_hot_and_unsupported_mortality_classes(self):
+        # 34°C, 50% RH, 500 W/m², 2 m/s produces IHI 29.07: very hot in Delhi.
+        series = [hourly_day(1, 30), hourly_day(2, 34)]
+        day = build_health_impact(series, 28.6139, 77.2090)["mortality"]["forecast"][0]
+        self.assertEqual(day["ihi_class"], "very_hot")
+        self.assertEqual(day["mortality_effect_percent_per_ihi_c"], 3.4)
+        cool = build_health_impact([hourly_day(1, 30), hourly_day(2, 22)], 28.6139, 77.2090)["mortality"]["forecast"][0]
+        self.assertFalse(cool["mortality_effect_available"])
+        self.assertIsNone(cool["relative_risk_per_ihi_c"])
 
     def test_hospitalization_threshold_and_aggregation(self):
         # D0 plus D+1…D+5: spikes are false, true, true, false, true.
-        series = [hourly_day(1, 30)] + [hourly_day(day, temp) for day, temp in zip(range(2, 7), (39.9, 40, 41, 39, 40))]
+        series = [hourly_day(1, 30)] + [hourly_day(day, temp) for day, temp in zip(range(2, 7), (38.9, 39, 40, 38, 39))]
         hospital = build_health_impact(series, 28.6139, 77.2090)["hospitalization"]
         self.assertFalse(hospital["forecast"][0]["hospitalization_spike"])
         self.assertTrue(hospital["forecast"][1]["hospitalization_spike"])
@@ -63,3 +75,7 @@ class HealthImpactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "limited to India"):
             classify_climate_zone(51.5, -0.1)
 
+    def test_ihi_validity_flag(self):
+        outcome = build_health_impact([hourly_day(1, 30), hourly_day(2, 15)], 28.6139, 77.2090)
+        self.assertFalse(outcome["hourly_ihi"][1]["validity"]["within_published_range"])
+        self.assertIsNone(outcome["hourly_ihi"][1]["ihi_c"])

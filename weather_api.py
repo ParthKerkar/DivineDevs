@@ -249,6 +249,8 @@ def calculate_hourly_wbgt(data, latitude=None, longitude=None, roughness_length=
         try:
             tair, rh = hourly["temperature_2m"][i], hourly["relative_humidity_2m"][i]
             wind, solar, pres = hourly["wind_speed_10m"][i], hourly["shortwave_radiation"][i], hourly["surface_pressure"][i]
+            if not all(math.isfinite(float(value)) for value in (tair, rh, wind, solar, pres)):
+                raise ValueError("Weather inputs must be finite numbers")
             result = calculate_liljegren_outdoor_wbgt(tair, rh, wind, solar, pres, timestamp, latitude, longitude, roughness_length=roughness_length)
         except (IndexError, KeyError, TypeError, ValueError):
             tair = rh = wind = solar = None
@@ -278,6 +280,8 @@ def calculate_current_wbgt(data, latitude=None, longitude=None, roughness_length
     validate_location(latitude, longitude)
     current = data.get("current", {})
     try:
+        if not all(math.isfinite(float(current[field])) for field in CURRENT_FIELDS):
+            raise ValueError("Weather inputs must be finite numbers")
         result = calculate_liljegren_outdoor_wbgt(
             current["temperature_2m"], current["relative_humidity_2m"], current["wind_speed_10m"],
             current["shortwave_radiation"], current["surface_pressure"], current["time"],
@@ -299,7 +303,8 @@ def build_dashboard_payload(data, latitude=None, longitude=None, roughness_lengt
     health_impact = build_health_impact(hourly, latitude if latitude is not None else data.get("latitude"),
                                         longitude if longitude is not None else data.get("longitude"))
     for record, ihi_record in zip(hourly, health_impact["hourly_ihi"]):
-        record["ihi"] = ihi_record["ihi"]
+        record["ihi_c"] = ihi_record["ihi_c"]
+        record["ihi_validity"] = ihi_record["validity"]
     return {"current": calculate_current_wbgt(data, latitude, longitude, roughness_length),
             "hourly": hourly, "daily_max_wbgt": daily_max_wbgt(hourly), "health_impact": health_impact}
 
