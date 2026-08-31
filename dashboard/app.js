@@ -1,38 +1,39 @@
-const cities = [
-  { name: "Pune", lat: 18.5204, lon: 73.8567 }, { name: "Mumbai", lat: 19.0760, lon: 72.8777 },
-  { name: "Delhi", lat: 28.6139, lon: 77.2090 }, { name: "Ahmedabad", lat: 23.0225, lon: 72.5714 },
-  { name: "Chennai", lat: 13.0827, lon: 80.2707 }, { name: "Kolkata", lat: 22.5726, lon: 88.3639 },
-];
-const colors = { White: "#ffffff", Green: "#38d430", Yellow: "#fff700", Red: "#ff0909", Black: "#050505" };
-const map = L.map("map", { zoomControl: true }).setView([21.2, 78.2], 5);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap contributors" }).addTo(map);
-const markers = new Map(); let selected;
-
-function text(value, fallback = "No result") { return value == null ? fallback : value; }
-function celsius(value) { return value == null ? "—" : `${value.toFixed(1)}°C`; }
-function flagClass(flag) { return (flag || "White").toLowerCase(); }
-function markerIcon(flag) { return L.divIcon({ className: "", iconSize: [25, 25], iconAnchor: [12, 12], html: `<div class="city-marker" style="width:25px;height:25px;background:${colors[flag] || "#aab7c2"}"></div>` }); }
-
-function renderDetails(city, payload) {
-  const current = payload.current;
-  document.querySelector("#place").textContent = `${city.name.toUpperCase()} · ${current.time}`;
-  document.querySelector("#updated").textContent = `Last refreshed ${new Date(payload.updated_at).toLocaleTimeString()} · updates every 5 min`;
-  document.querySelector("#current").className = `current-card ${flagClass(current.risk)}`;
-  document.querySelector("#current").innerHTML = current.wbgt_c == null ? "<h3>Current WBGT unavailable</h3><p>The solver did not converge for this observation.</p>" : `<h3>Current WBGT · ${current.risk}</h3><p class="wbgt">${celsius(current.wbgt_c)}</p><p>Air ${celsius(current.tair_c)} · RH ${text(current.rh_pct)}% · Wind ${text(current.wind_ms)} m/s</p>`;
-  const forecast = document.querySelector("#forecast"); forecast.replaceChildren();
-  payload.daily_max_wbgt.forEach(item => { const row = document.querySelector("#forecast-row").content.cloneNode(true); const article = row.querySelector("article"); article.classList.add(flagClass(item.risk)); row.querySelector("time").textContent = new Date(`${item.time.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); row.querySelector("strong").textContent = celsius(item.wbgt_c); row.querySelector("span").textContent = item.risk; forecast.append(row); });
+const cities=[["Mumbai",19.076,72.878],["Delhi",28.614,77.209],["Bengaluru",12.972,77.595],["Hyderabad",17.385,78.487],["Chennai",13.083,80.271],["Kolkata",22.573,88.364],["Pune",18.520,73.857],["Ahmedabad",23.023,72.571],["Jaipur",26.912,75.787],["Lucknow",26.847,80.947],["Kanpur",26.449,80.332],["Nagpur",21.146,79.088],["Indore",22.719,75.857],["Bhopal",23.260,77.412],["Surat",21.170,72.831],["Vadodara",22.307,73.181],["Visakhapatnam",17.686,83.218],["Vijayawada",16.506,80.648],["Kochi",9.932,76.267],["Thiruvananthapuram",8.525,76.936],["Coimbatore",11.017,76.955],["Madurai",9.925,78.120],["Mysuru",12.295,76.640],["Patna",25.594,85.138],["Ranchi",23.345,85.309],["Bhubaneswar",20.296,85.825],["Guwahati",26.145,91.736],["Srinagar",34.083,74.797],["Chandigarh",30.734,76.779],["Dehradun",30.316,78.032],["Raipur",21.251,81.629],["Jodhpur",26.239,73.024],["Nashik",19.997,73.790],["Aurangabad",19.876,75.343],["Faridabad",28.409,77.317],["Noida",28.535,77.391]].map(([name,lat,lon])=>({name,lat,lon}));
+// Fixed threshold stops mirror the WBGT flag methodology, not the current API range.
+const colors={White:"#12b9e6",Green:"#26c66f",Yellow:"#ffe03b",Red:"#f2572f",Black:"#8f1125"}, stops=[[24,"#159ed1"],[27.8,"#26c66f"],[29.5,"#ffe03b"],[31.1,"#f58b2a"],[32.2,"#e43d2f"],[35,"#7a091d"]];
+const map=L.map("map",{zoomControl:false,minZoom:4}).setView([22.7,79.2],5);
+// Leaflet's normal overlay pane is 400.  Keep the base context below it and
+// put the provider's transparent annotation tiles in their own label pane.
+map.createPane("basemap");map.getPane("basemap").style.zIndex=200;
+map.createPane("labels");map.getPane("labels").style.zIndex=450;
+L.control.zoom({position:"bottomright"}).addTo(map);
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}",{pane:"basemap",maxZoom:18,attribution:"Tiles © Esri — Source: Esri, USGS, NOAA"}).addTo(map);
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Reference_Overlay/MapServer/tile/{z}/{y}/{x}",{pane:"labels",maxZoom:18,attribution:"© Esri"}).addTo(map);const markers=new Map();let selected,fieldLayer;
+// The bundled server hosts both UI and API on :8000.  When a development
+// server hosts the static dashboard on another local port, use that backend
+// explicitly instead of issuing a broken relative request to the dev server.
+const apiBase=(location.hostname==="localhost"||location.hostname==="127.0.0.1")&&location.port!=="8000"?"http://localhost:8000":"";
+const apiUrl=path=>`${apiBase}${path}`;
+const text=(v,f="—")=>v==null?f:v,celsius=v=>v==null?"—":`${v.toFixed(1)}°C`,flagClass=f=>(f||"White").toLowerCase();
+function markerIcon(flag,active=false){return L.divIcon({className:"",iconSize:[active?20:10,active?20:10],iconAnchor:[active?10:5,active?10:5],html:`<span class="city-marker ${active?"selected":""}" style="background:${colors[flag]||"#71818b"}"></span>`})}
+function renderDetails(city,payload){const c=payload.current;place.textContent=`${city.name.toUpperCase()} · ${c.time}`;updated.textContent=`Analysis updated ${new Date(payload.updated_at).toLocaleTimeString()}`;current.className=`current-card ${flagClass(c.risk)}`;current.innerHTML=c.wbgt_c==null?"<h3>Current WBGT unavailable</h3><p>The physical solver did not converge.</p>":`<h3>Current WBGT <span>${c.risk}</span></h3><p class="wbgt">${celsius(c.wbgt_c)}</p><p>Air ${celsius(c.tair_c)} · RH ${text(c.rh_pct)}% · Wind ${text(c.wind_ms)} m/s</p><p>Solar ${text(c.solar_wm2)} W/m²</p>`;forecast.replaceChildren();payload.daily_max_wbgt.forEach(i=>{const row=forecastRow.content.cloneNode(true),a=row.querySelector("article");a.classList.add(flagClass(i.risk));row.querySelector("time").textContent=new Date(`${i.time.slice(0,10)}T00:00:00Z`).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});row.querySelector("strong").textContent=celsius(i.wbgt_c);row.querySelector("span").textContent=i.risk;forecast.append(row)});details.classList.add("visible")}
+async function selectCity(city,view=true){selected=city;place.textContent=`${city.name.toUpperCase()} · UPDATING`;for(const[n,m]of markers)m.setIcon(markerIcon(m.options.risk,n===city.name));try{const r=await fetch(apiUrl(`/api/wbgt?lat=${city.lat}&lon=${city.lon}`)),p=await r.json();if(!r.ok)throw Error(p.error||"Weather service is temporarily unavailable.");const m=markers.get(city.name);if(m){m.options.risk=p.current.risk;m.setIcon(markerIcon(p.current.risk,true));m.bindPopup(`<b>${city.name}</b><br>${celsius(p.current.wbgt_c)} · ${p.current.risk}`).openPopup()}renderDetails(city,p);if(view)map.flyTo([city.lat,city.lon],Math.max(map.getZoom(),7),{duration:.7})}catch(e){current.innerHTML=`<h3>Weather update failed</h3><p>${e.message==="Failed to fetch"?"Unable to reach the local WBGT service. Start dashboard_server.py and try again.":e.message}</p>`;details.classList.add("visible")}}
+function colorFor(v){for(let i=1;i<stops.length;i++)if(v<=stops[i][0]){const a=stops[i-1],b=stops[i],t=(v-a[0])/(b[0]-a[0]),aa=a[1].match(/\w\w/g).map(x=>parseInt(x,16)),bb=b[1].match(/\w\w/g).map(x=>parseInt(x,16));return `rgb(${aa.map((x,j)=>Math.round(x+(bb[j]-x)*t)).join(",")})`}return stops.at(-1)[1]}
+function interpolate(lat,lon,points){let w=0,sum=0;for(const p of points){const d=Math.max(.08,Math.hypot((p.lat-lat)*1.1,(p.lon-lon)*Math.cos(lat*Math.PI/180))),x=1/(d*d);w+=x;sum+=x*p.wbgt_c}return sum/w}
+// Leaflet's base tiles are EPSG:3857.  SVG coordinates therefore use the same
+// Web-Mercator Y axis rather than treating degrees of latitude as linear pixels.
+function mercatorY(lat){const r=lat*Math.PI/180;return Math.log(Math.tan(Math.PI/4+r/2))}
+function latitudeFromMercator(y){return (2*Math.atan(Math.exp(y))-Math.PI/2)*180/Math.PI}
+function renderField(d,boundary){
+ const[minLon,minLat,maxLon,maxLat]=[66,6,99,37],width=660,height=680,top=mercatorY(maxLat),bottom=mercatorY(minLat);
+ const x=lon=>(lon-minLon)/(maxLon-minLon)*width, y=lat=>(top-mercatorY(lat))/(top-bottom)*height;
+ const polygons=boundary.features[0].geometry.coordinates;
+ const path=polygons.flatMap(polygon=>polygon.map(ring=>ring.map(([lon,lat],i)=>`${i?"L":"M"}${x(lon).toFixed(2)} ${y(lat).toFixed(2)}`).join(" ")+" Z"));
+ const cols=110,rows=110;let cells="";
+ for(let row=0;row<rows;row++)for(let col=0;col<cols;col++){const yy=row/rows*height,lat=latitudeFromMercator(top-(yy+height/rows/2)/height*(top-bottom)),lon=minLon+(col+.5)/cols*(maxLon-minLon);cells+=`<rect x="${col/cols*width}" y="${yy}" width="${width/cols+.3}" height="${height/rows+.3}" fill="${colorFor(interpolate(lat,lon,d.points))}"/>`}
+ const svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"><defs><clipPath id="india"><path d="${path.join(" ")}" fill-rule="evenodd"/></clipPath><filter id="blur"><feGaussianBlur stdDeviation="1.4"/></filter></defs><g clip-path="url(#india)" filter="url(#blur)">${cells}</g></svg>`;
+ const encoded=btoa(unescape(encodeURIComponent(svg)));if(fieldLayer)map.removeLayer(fieldLayer);
+ fieldLayer=L.imageOverlay(`data:image/svg+xml;base64,${encoded}`,[[minLat,minLon],[maxLat,maxLon]],{opacity:.84,interactive:false}).addTo(map);fieldLayer.bringToBack()
 }
-
-async function selectCity(city, updateView = true) {
-  selected = city; document.querySelector("#place").textContent = `${city.name.toUpperCase()} · UPDATING`;
-  try {
-    const response = await fetch(`/api/wbgt?lat=${city.lat}&lon=${city.lon}`); const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Request failed");
-    const marker = markers.get(city.name); marker.setIcon(markerIcon(payload.current.risk)); marker.bindPopup(`${city.name}<br>${celsius(payload.current.wbgt_c)} · ${payload.current.risk}`);
-    renderDetails(city, payload); if (updateView) { map.flyTo([city.lat, city.lon], 8); marker.openPopup(); }
-  } catch (error) { document.querySelector("#current").innerHTML = `<h3>Update failed</h3><p>${error.message}</p>`; document.querySelector("#updated").textContent = "Could not fetch live weather"; }
-}
-
-cities.forEach(city => { const marker = L.marker([city.lat, city.lon], { icon: markerIcon() }).addTo(map).bindTooltip(city.name); marker.on("click", () => selectCity(city)); markers.set(city.name, marker); });
-selectCity(cities[0], false);
-setInterval(() => selected && selectCity(selected, false), 5 * 60 * 1000);
+async function loadField(){try{const [grid,boundary]=await Promise.all([fetch(apiUrl("/api/wbgt-grid")),fetch("india-boundary.geojson")]),d=await grid.json(),shape=await boundary.json();if(!grid.ok||!boundary.ok||!d.points.length)throw Error(d.error||"No valid observations");renderField(d,shape);fieldStatus.textContent=`Live spatial analysis · ${d.points.length} calculated observations`}catch(e){fieldStatus.textContent=`Spatial analysis unavailable: ${e.message}`;fieldStatus.classList.add("error")}}
+cities.forEach(c=>{const m=L.marker([c.lat,c.lon],{icon:markerIcon(),risk:null}).addTo(map).bindTooltip(c.name,{direction:"top",offset:[0,-7],opacity:.9});m.on("click",()=>selectCity(c));markers.set(c.name,m)});map.on("zoomend",()=>{const show=map.getZoom()>=6;markers.forEach(m=>show?m.openTooltip():m.closeTooltip())});let timer;citySearch.addEventListener("input",()=>{clearTimeout(timer);const q=citySearch.value.trim();searchResults.replaceChildren();if(q.length<2)return;timer=setTimeout(async()=>{try{const r=await fetch(apiUrl(`/api/search?q=${encodeURIComponent(q)}`)),d=await r.json();if(!r.ok)throw Error(d.error||"City search is temporarily unavailable.");if(!d.results.length){searchResults.innerHTML="<p>City not found in India.</p>";return}d.results.forEach(p=>{const b=document.createElement("button");b.type="button";b.textContent=`${p.name}${p.admin1?`, ${p.admin1}`:""}`;b.onclick=()=>{citySearch.value=p.name;searchResults.replaceChildren();const c={name:p.name,lat:p.lat,lon:p.lon};if(!markers.has(c.name)){const m=L.marker([c.lat,c.lon],{icon:markerIcon(),risk:null}).addTo(map);m.on("click",()=>selectCity(c));markers.set(c.name,m)}selectCity(c)};searchResults.append(b)})}catch(e){searchResults.innerHTML=`<p>${e.message==="Failed to fetch"?"Unable to reach the local WBGT service. Start dashboard_server.py and try again.":e.message}</p>`}},260)});loadField();selectCity(cities[0],false);setInterval(()=>selected&&selectCity(selected,false),300000);
