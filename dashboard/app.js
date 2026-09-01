@@ -8,6 +8,9 @@ function initTheme() {
 
 function setTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
+  if (document.body) {
+    document.body.classList.toggle("dark-theme", theme === "dark");
+  }
   localStorage.setItem("heatshield_theme", theme);
   const toggleBtn = document.getElementById("themeToggle");
   if (toggleBtn) {

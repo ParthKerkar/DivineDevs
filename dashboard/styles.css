@@ -593,6 +593,7 @@ main {
 }
 
 .health-summary article {
+  position: relative;
   padding: 9px 10px;
   border: 1px solid var(--card-border);
   border-radius: 8px;
@@ -600,18 +601,23 @@ main {
   transition: all 0.2s ease;
 }
 
-.health-summary strong, .health-summary span {
-  display: block;
+.card-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
 }
 
 .health-summary strong {
+  display: block;
   font-size: 0.96rem;
   font-weight: 750;
   color: var(--text-primary);
   margin-top: 2px;
 }
 
-.health-summary span {
+.health-summary span, .health-summary span.card-label {
+  display: block;
   font-size: 0.65rem;
   line-height: 1.25;
   color: var(--text-muted);
@@ -620,15 +626,281 @@ main {
   font-weight: 700;
 }
 
-.health-summary .health-level {
-  grid-column: span 2;
-  background: var(--health-level-bg);
-  border-color: var(--health-level-border);
+/* Info Icon & Hover Tooltip */
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+  transition: color 0.15s ease, transform 0.15s ease;
+  outline: none;
+  flex-shrink: 0;
 }
 
-.health-summary .health-level strong {
-  font-size: 0.86rem;
-  color: var(--health-level-text);
+.info-tip svg {
+  width: 12px;
+  height: 12px;
+}
+
+.info-tip:hover, .info-tip:focus-visible, .info-tip:active {
+  color: var(--accent-color);
+  transform: scale(1.15);
+}
+
+.info-tip .tip-content {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  width: 215px;
+  background: var(--panel-bg-solid);
+  color: var(--text-primary);
+  font-size: 0.67rem;
+  font-weight: 500;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 8px 10px;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.35), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--panel-border);
+  z-index: 1000;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: translateY(4px);
+}
+
+.info-tip .tip-content strong {
+  display: block;
+  font-size: 0.69rem;
+  font-weight: 750;
+  color: var(--accent-color);
+  margin-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.info-tip .tip-content::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  border-width: 5px;
+  border-style: solid;
+  border-color: var(--panel-bg-solid) transparent transparent transparent;
+}
+
+/* Card 1 (Mortality risk index): Positioned with ample safety margin on both left and right edges */
+.health-summary article:nth-child(1) .info-tip .tip-content {
+  width: 200px;
+  left: -48px;
+  right: auto;
+}
+.health-summary article:nth-child(1) .info-tip .tip-content::after {
+  left: 52px;
+  right: auto;
+}
+
+/* Card 2 (Relative risk): Position tooltip towards left */
+.health-summary article:nth-child(2) .info-tip .tip-content {
+  width: 200px;
+  right: -8px;
+  left: auto;
+}
+.health-summary article:nth-child(2) .info-tip .tip-content::after {
+  right: 12px;
+  left: auto;
+}
+
+/* Card 3 (Overall Heat-Health Level): Position tooltip towards left */
+.health-summary .health-level .info-tip .tip-content {
+  width: 215px;
+  right: -8px;
+  left: auto;
+}
+.health-summary .health-level .info-tip .tip-content::after {
+  right: 12px;
+  left: auto;
+}
+
+.info-tip:hover .tip-content,
+.info-tip:focus-visible .tip-content,
+.info-tip:active .tip-content {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Overall Heat-Health Level Dynamic Status Themes (Low to Extreme) */
+.health-summary .health-level {
+  grid-column: span 2;
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+}
+
+/* LOW (Blue) */
+.health-summary .health-level.level-low,
+.health-summary .health-level:not([class*="level-"]) {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+}
+.health-summary .health-level.level-low span.card-label,
+.health-summary .health-level:not([class*="level-"]) span.card-label {
+  color: #0284c7;
+}
+.health-summary .health-level.level-low strong,
+.health-summary .health-level:not([class*="level-"]) strong {
+  font-size: 0.88rem;
+  color: #0369a1;
+}
+
+/* MODERATE (Green) */
+.health-summary .health-level.level-moderate {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+.health-summary .health-level.level-moderate span.card-label {
+  color: #16a34a;
+}
+.health-summary .health-level.level-moderate strong {
+  font-size: 0.88rem;
+  color: #15803d;
+}
+
+/* HIGH (Amber / Yellow) */
+.health-summary .health-level.level-high {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+.health-summary .health-level.level-high span.card-label {
+  color: #d97706;
+}
+.health-summary .health-level.level-high strong {
+  font-size: 0.88rem;
+  color: #b45309;
+}
+
+/* VERY HIGH (Orange / Tangerine) */
+.health-summary .health-level.level-very_high,
+.health-summary .health-level.level-very-high {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+.health-summary .health-level.level-very_high span.card-label,
+.health-summary .health-level.level-very-high span.card-label {
+  color: #ea580c;
+}
+.health-summary .health-level.level-very_high strong,
+.health-summary .health-level.level-very-high strong {
+  font-size: 0.88rem;
+  color: #c2410c;
+}
+
+/* EXTREME (Dark Red / Crimson) */
+.health-summary .health-level.level-extreme,
+.health-summary .health-level.level-critical {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+.health-summary .health-level.level-extreme span.card-label,
+.health-summary .health-level.level-critical span.card-label {
+  color: #dc2626;
+}
+.health-summary .health-level.level-extreme strong,
+.health-summary .health-level.level-critical strong {
+  font-size: 0.88rem;
+  color: #991b1b;
+}
+
+/* Dark Theme Status Overrides */
+[data-theme="dark"] .health-summary .health-level.level-low,
+[data-theme="dark"] .health-summary .health-level:not([class*="level-"]),
+body.dark-theme .health-summary .health-level.level-low,
+body.dark-theme .health-summary .health-level:not([class*="level-"]) {
+  background: rgba(2, 132, 199, 0.22);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+[data-theme="dark"] .health-summary .health-level.level-low span.card-label,
+[data-theme="dark"] .health-summary .health-level:not([class*="level-"]) span.card-label,
+body.dark-theme .health-summary .health-level.level-low span.card-label,
+body.dark-theme .health-summary .health-level:not([class*="level-"]) span.card-label {
+  color: #7dd3fc;
+}
+[data-theme="dark"] .health-summary .health-level.level-low strong,
+[data-theme="dark"] .health-summary .health-level:not([class*="level-"]) strong,
+body.dark-theme .health-summary .health-level.level-low strong,
+body.dark-theme .health-summary .health-level:not([class*="level-"]) strong {
+  color: #38bdf8;
+}
+
+[data-theme="dark"] .health-summary .health-level.level-moderate,
+body.dark-theme .health-summary .health-level.level-moderate {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(52, 211, 153, 0.4);
+}
+[data-theme="dark"] .health-summary .health-level.level-moderate span.card-label,
+body.dark-theme .health-summary .health-level.level-moderate span.card-label {
+  color: #6ee7b7;
+}
+[data-theme="dark"] .health-summary .health-level.level-moderate strong,
+body.dark-theme .health-summary .health-level.level-moderate strong {
+  color: #34d399;
+}
+
+[data-theme="dark"] .health-summary .health-level.level-high,
+body.dark-theme .health-summary .health-level.level-high {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: rgba(251, 191, 36, 0.4);
+}
+[data-theme="dark"] .health-summary .health-level.level-high span.card-label,
+body.dark-theme .health-summary .health-level.level-high span.card-label {
+  color: #fde68a;
+}
+[data-theme="dark"] .health-summary .health-level.level-high strong,
+body.dark-theme .health-summary .health-level.level-high strong {
+  color: #fbbf24;
+}
+
+[data-theme="dark"] .health-summary .health-level.level-very_high,
+[data-theme="dark"] .health-summary .health-level.level-very-high,
+body.dark-theme .health-summary .health-level.level-very_high,
+body.dark-theme .health-summary .health-level.level-very-high {
+  background: rgba(234, 88, 12, 0.25);
+  border-color: rgba(251, 146, 60, 0.45);
+}
+[data-theme="dark"] .health-summary .health-level.level-very_high span.card-label,
+[data-theme="dark"] .health-summary .health-level.level-very-high span.card-label,
+body.dark-theme .health-summary .health-level.level-very_high span.card-label,
+body.dark-theme .health-summary .health-level.level-very-high span.card-label {
+  color: #fdba74;
+}
+[data-theme="dark"] .health-summary .health-level.level-very_high strong,
+[data-theme="dark"] .health-summary .health-level.level-very-high strong,
+body.dark-theme .health-summary .health-level.level-very_high strong,
+body.dark-theme .health-summary .health-level.level-very-high strong {
+  color: #fb923c;
+}
+
+[data-theme="dark"] .health-summary .health-level.level-extreme,
+[data-theme="dark"] .health-summary .health-level.level-critical,
+body.dark-theme .health-summary .health-level.level-extreme,
+body.dark-theme .health-summary .health-level.level-critical {
+  background: rgba(185, 28, 28, 0.32);
+  border-color: rgba(248, 113, 113, 0.5);
+}
+[data-theme="dark"] .health-summary .health-level.level-extreme span.card-label,
+[data-theme="dark"] .health-summary .health-level.level-critical span.card-label,
+body.dark-theme .health-summary .health-level.level-extreme span.card-label,
+body.dark-theme .health-summary .health-level.level-critical span.card-label {
+  color: #fca5a5;
+}
+[data-theme="dark"] .health-summary .health-level.level-extreme strong,
+[data-theme="dark"] .health-summary .health-level.level-critical strong,
+body.dark-theme .health-summary .health-level.level-extreme strong,
+body.dark-theme .health-summary .health-level.level-critical strong {
+  color: #f87171;
 }
 
 /* Section Headings */
