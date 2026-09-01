@@ -227,13 +227,13 @@ def calculate_liljegren_outdoor_wbgt(temperature_c, relative_humidity, wind_spee
 
 
 def risk_category(wbgt_c):
-    """Display flag thresholds from the supplied outdoor WBGT chart (°C)."""
+    """Display color categories from the outdoor WBGT chart (°C)."""
     if wbgt_c is None: return None
-    if wbgt_c < 27.8: return "White"
+    if wbgt_c < 27.8: return "Blue"
     if wbgt_c < 29.5: return "Green"
     if wbgt_c < 31.1: return "Yellow"
-    if wbgt_c < 32.2: return "Red"
-    return "Black"
+    if wbgt_c < 32.2: return "Orange"
+    return "Red"
 
 
 def calculate_hourly_wbgt(data, latitude=None, longitude=None, roughness_length=.1):
