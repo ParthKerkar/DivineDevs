@@ -53,10 +53,11 @@ def get_ai_api_key() -> Optional[str]:
 
 
 def generate_deterministic_recommendations(risk_context: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Generate evidence-grounded recommendations using deterministic rules and MRI weighting."""
+    """Generate evidence-grounded recommendations using deterministic rules, physical WBGT, and MRI weighting."""
     audience = risk_context.get("audience", "PUBLIC")
     overall_level = risk_context.get("overall_heat_health_level", "LOW")
     wbgt = risk_context.get("wbgt")
+    wbgt_level = risk_context.get("wbgt_level", "LOW")
     mri = risk_context.get("mortality_risk_index")
     trend = risk_context.get("forecast_trend", "STABLE")
     elevated_days = risk_context.get("elevated_heat_days", 0)
@@ -75,27 +76,42 @@ def generate_deterministic_recommendations(risk_context: Dict[str, Any]) -> List
         source = item.get("source", "")
         source_ref = item.get("source_reference", "")
 
-        # Dynamic priority adjustment based on MRI and Trend
+        # Dynamic priority adjustment based on physical WBGT, MRI, and Trend
         priority = base_priority
-        if overall_level in ["VERY_HIGH", "EXTREME"]:
+        if overall_level == "EXTREME":
             priority = 1
+        elif overall_level == "VERY_HIGH":
+            if category in ["EXPOSURE_REDUCTION", "REST_RECOVERY", "HYDRATION", "PUBLIC_ALERT", "WORKLOAD_REDUCTION"]:
+                priority = 1
+            else:
+                priority = min(priority, 2)
         elif overall_level == "HIGH":
-            if category in ["EXPOSURE_REDUCTION", "HYDRATION", "REST_RECOVERY", "PUBLIC_ALERT"]:
+            if category in ["EXPOSURE_REDUCTION", "HYDRATION", "REST_RECOVERY", "PUBLIC_ALERT", "WORK_SCHEDULING"]:
                 priority = 1
             else:
                 priority = 2
-        elif overall_level == "MODERATE" and trend in ["RAPIDLY_INCREASING", "INCREASING"]:
-            if category in ["HYDRATION", "COOLING", "WORK_SCHEDULING"]:
-                priority = min(priority, 2)
+        elif overall_level == "MODERATE":
+            if trend in ["RAPIDLY_INCREASING", "INCREASING"]:
+                if category in ["HYDRATION", "COOLING", "REST_RECOVERY", "WORK_SCHEDULING"]:
+                    priority = 1
+            elif category in ["REST_RECOVERY", "HYDRATION"]:
+                priority = 1
 
-        # Context-aware reason generation
-        wbgt_str = f"{wbgt:.1f}Â°C" if wbgt is not None else "elevated"
-        if overall_level in ["VERY_HIGH", "EXTREME"]:
-            reason = f"Current WBGT is critical ({wbgt_str}) with very high epidemiological risk (MRI: {mri or 'N/A'}); immediate protective action is necessary."
+        # Context-aware reason generation with exact WBGT and risk values
+        wbgt_str = f"{wbgt:.1f}°C" if wbgt is not None else "elevated"
+        mri_str = f"{mri:.1f}/100" if mri is not None else "N/A"
+
+        if overall_level == "EXTREME":
+            reason = f"Current WBGT is critical ({wbgt_str}) with severe epidemiological mortality risk (MRI: {mri_str}); immediate emergency protective action is required."
+        elif overall_level == "VERY_HIGH":
+            reason = f"Current WBGT is at dangerous levels ({wbgt_str}) with very high thermal strain (MRI: {mri_str}); active cooling and strict rest cycles are essential."
         elif overall_level == "HIGH":
-            reason = f"WBGT is high ({wbgt_str}) with significant thermal strain; protective measures are recommended before heat peaks."
-        elif trend in ["RAPIDLY_INCREASING", "INCREASING"]:
-            reason = f"Thermal stress is currently moderate ({wbgt_str}) but forecast to intensify over the 5-day period."
+            reason = f"WBGT is high ({wbgt_str}) with elevated physiological thermal strain (MRI: {mri_str}); protective exposure and hydration regimens are recommended before peak heat."
+        elif overall_level == "MODERATE":
+            if trend in ["RAPIDLY_INCREASING", "INCREASING"]:
+                reason = f"Thermal stress is moderate ({wbgt_str}) but forecast to intensify over the 5-day period."
+            else:
+                reason = f"WBGT is in the moderate thermal stress range ({wbgt_str}); sweat rate and cardiovascular strain increase during physical exertion."
         else:
             reason = f"Routine heat-health precaution for baseline environmental conditions (WBGT: {wbgt_str})."
 

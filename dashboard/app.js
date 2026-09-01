@@ -1,6 +1,39 @@
+// HeatShield Dashboard Application
+function initTheme() {
+  const saved = localStorage.getItem("heatshield_theme");
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const theme = saved || (prefersDark ? "dark" : "light");
+  setTheme(theme);
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("heatshield_theme", theme);
+  const toggleBtn = document.getElementById("themeToggle");
+  if (toggleBtn) {
+    toggleBtn.setAttribute("aria-pressed", theme === "dark");
+    const label = toggleBtn.querySelector(".theme-btn-text");
+    if (label) label.textContent = theme === "dark" ? "Light Mode" : "Dark Mode";
+  }
+}
+
+const themeToggleBtn = document.getElementById("themeToggle");
+if (themeToggleBtn) {
+  themeToggleBtn.addEventListener("click", () => {
+    const current = document.documentElement.getAttribute("data-theme") || "light";
+    setTheme(current === "dark" ? "light" : "dark");
+  });
+}
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
+  if (!localStorage.getItem("heatshield_theme")) {
+    setTheme(e.matches ? "dark" : "light");
+  }
+});
+initTheme();
+
 const cities=[["Mumbai",19.076,72.878],["Delhi",28.614,77.209],["Bengaluru",12.972,77.595],["Hyderabad",17.385,78.487],["Chennai",13.083,80.271],["Kolkata",22.573,88.364],["Pune",18.520,73.857],["Ahmedabad",23.023,72.571],["Jaipur",26.912,75.787],["Lucknow",26.847,80.947],["Kanpur",26.449,80.332],["Nagpur",21.146,79.088],["Indore",22.719,75.857],["Bhopal",23.260,77.412],["Surat",21.170,72.831],["Vadodara",22.307,73.181],["Visakhapatnam",17.686,83.218],["Vijayawada",16.506,80.648],["Kochi",9.932,76.267],["Thiruvananthapuram",8.525,76.936],["Coimbatore",11.017,76.955],["Madurai",9.925,78.120],["Mysuru",12.295,76.640],["Patna",25.594,85.138],["Ranchi",23.345,85.309],["Bhubaneswar",20.296,85.825],["Guwahati",26.145,91.736],["Srinagar",34.083,74.797],["Chandigarh",30.734,76.779],["Dehradun",30.316,78.032],["Raipur",21.251,81.629],["Jodhpur",26.239,73.024],["Nashik",19.997,73.790],["Aurangabad",19.876,75.343],["Faridabad",28.409,77.317],["Noida",28.535,77.391]].map(([name,lat,lon])=>({name,lat,lon}));
 // Fixed threshold stops mirror the WBGT flag methodology, not the current API range.
-const colors={Blue:"#12b9e6",Green:"#26c66f",Yellow:"#ffe03b",Orange:"#f58b2a",Red:"#e43d2f",White:"#12b9e6",Black:"#e43d2f"}, stops=[[24,"#159ed1"],[27.8,"#26c66f"],[29.5,"#ffe03b"],[31.1,"#f58b2a"],[32.2,"#e43d2f"],[35,"#7a091d"]];
+const colors={Blue:"#0284c7",Green:"#10b981",Yellow:"#f59e0b",Orange:"#ea580c",Red:"#dc2626",White:"#0284c7",Black:"#dc2626"}, stops=[[24,"#0284c7"],[27.8,"#10b981"],[29.5,"#f59e0b"],[31.1,"#ea580c"],[32.2,"#dc2626"],[35,"#881337"]];
 const map=L.map("map",{zoomControl:false,minZoom:4}).setView([22.7,79.2],5);
 // Leaflet's normal overlay pane is 400.  Keep the base context below it and
 // put the provider's transparent annotation tiles in their own label pane.
@@ -17,8 +50,8 @@ const apiUrl=path=>`${apiBase}${path}`;
 const text=(v,f="—")=>v==null?f:v,celsius=v=>v==null?"—":`${v.toFixed(1)}°C`,flagClass=f=>(f||"Blue").toLowerCase().replace(/\s+/g,"");
 const istTime=(v,opts={hour:"numeric",minute:"2-digit",hour12:true})=>v?new Date(v).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",...opts})+" IST":"—";
 const istDateTime=v=>v?new Date(v).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"numeric",month:"short",hour:"numeric",minute:"2-digit",hour12:true})+" IST":"—";
-function markerIcon(flag,active=false){return L.divIcon({className:"",iconSize:[active?20:10,active?20:10],iconAnchor:[active?10:5,active?10:5],html:`<span class="city-marker ${active?"selected":""}" style="background:${colors[flag]||"#71818b"}"></span>`})}
-function renderDetails(city,payload){const c=payload.current;const currentRisk=(c.risk==="White")?"Blue":(c.risk==="Black"?"Red":(c.risk||"Blue"));place.textContent=`${city.name.toUpperCase()} · ${istDateTime(c.time)}`;updated.textContent=`Analysis updated ${istTime(payload.updated_at,{hour:"2-digit",minute:"2-digit",second:"2-digit"})}`;current.className=`current-card ${flagClass(currentRisk)}`;current.style.backgroundColor=colors[currentRisk]||"#159ed1";current.style.color=(currentRisk==="Yellow")?"#153b4c":"#ffffff";current.innerHTML=c.wbgt_c==null?"<h3>Current WBGT unavailable</h3><p>The physical solver did not converge.</p>":`<h3>Current WBGT <span>${currentRisk}</span></h3><p class="wbgt">${celsius(c.wbgt_c)}</p><p>Air ${celsius(c.tair_c)} · RH ${text(c.rh_pct)}% · Wind ${text(c.wind_ms)} m/s</p><p>Solar ${text(c.solar_wm2)} W/m²</p>`;forecast.replaceChildren();payload.daily_max_wbgt.forEach(i=>{const rowRisk=(i.risk==="White")?"Blue":(i.risk==="Black"?"Red":(i.risk||"Blue"));const row=forecastRow.content.cloneNode(true),a=row.querySelector("article");a.classList.add(flagClass(rowRisk));a.style.backgroundColor=colors[rowRisk]||"#159ed1";a.style.color=(rowRisk==="Yellow")?"#153b4c":"#ffffff";row.querySelector("time").textContent=new Date(i.time).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",weekday:"short",month:"short",day:"numeric"});row.querySelector("strong").textContent=celsius(i.wbgt_c);row.querySelector("span").textContent=rowRisk;forecast.append(row)});details.classList.add("visible")}
+function markerIcon(flag,active=false){return L.divIcon({className:"",iconSize:[active?18:10,active?18:10],iconAnchor:[active?9:5,active?9:5],html:`<span class="city-marker ${active?"selected":""}" style="background:${colors[flag]||"#71818b"}"></span>`})}
+function renderDetails(city,payload){const c=payload.current;const currentRisk=(c.risk==="White")?"Blue":(c.risk==="Black"?"Red":(c.risk||"Blue"));place.textContent=`${city.name.toUpperCase()} · ${istDateTime(c.time)}`;updated.textContent=`Analysis updated ${istTime(payload.updated_at,{hour:"2-digit",minute:"2-digit",second:"2-digit"})}`;current.className=`current-card ${flagClass(currentRisk)}`;current.style.backgroundColor=colors[currentRisk]||"#0284c7";current.style.color=(currentRisk==="Yellow")?"#0f172a":"#ffffff";current.innerHTML=c.wbgt_c==null?"<h3>Current WBGT unavailable</h3><p>The physical solver did not converge.</p>":`<h3>Current WBGT <span>${currentRisk}</span></h3><p class="wbgt">${celsius(c.wbgt_c)}</p><p>Air ${celsius(c.tair_c)} · RH ${text(c.rh_pct)}% · Wind ${text(c.wind_ms)} m/s</p><p>Solar ${text(c.solar_wm2)} W/m²</p>`;forecast.replaceChildren();payload.daily_max_wbgt.forEach(i=>{const rowRisk=(i.risk==="White")?"Blue":(i.risk==="Black"?"Red":(i.risk||"Blue"));const row=forecastRow.content.cloneNode(true),a=row.querySelector("article");a.classList.add(flagClass(rowRisk));a.style.backgroundColor=colors[rowRisk]||"#0284c7";a.style.color=(rowRisk==="Yellow")?"#0f172a":"#ffffff";row.querySelector("time").textContent=new Date(i.time).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",weekday:"short",month:"short",day:"numeric"});row.querySelector("strong").textContent=celsius(i.wbgt_c);row.querySelector("span").textContent=rowRisk;forecast.append(row)});details.classList.add("visible")}
 async function selectCity(city,view=true){selected=city;place.textContent=`${city.name.toUpperCase()} · UPDATING`;for(const[n,m]of markers)m.setIcon(markerIcon(m.options.risk,n===city.name));try{const r=await fetch(apiUrl(`/api/wbgt?lat=${city.lat}&lon=${city.lon}`)),p=await r.json();if(!r.ok)throw Error(p.error||"Weather service is temporarily unavailable.");const m=markers.get(city.name);if(m){m.options.risk=p.current.risk;m.setIcon(markerIcon(p.current.risk,true));m.bindPopup(`<b>${city.name}</b><br>${celsius(p.current.wbgt_c)} · ${p.current.risk}`).openPopup()}renderDetails(city,p);if(view)map.flyTo([city.lat,city.lon],Math.max(map.getZoom(),7),{duration:.7})}catch(e){current.innerHTML=`<h3>Weather update failed</h3><p>${e.message==="Failed to fetch"?"Unable to reach the local WBGT service. Start dashboard_server.py and try again.":e.message}</p>`;details.classList.add("visible")}}
 function colorFor(v){for(let i=1;i<stops.length;i++)if(v<=stops[i][0]){const a=stops[i-1],b=stops[i],t=(v-a[0])/(b[0]-a[0]),aa=a[1].match(/\w\w/g).map(x=>parseInt(x,16)),bb=b[1].match(/\w\w/g).map(x=>parseInt(x,16));return `rgb(${aa.map((x,j)=>Math.round(x+(bb[j]-x)*t)).join(",")})`}return stops.at(-1)[1]}
 function interpolate(lat,lon,points){let w=0,sum=0;for(const p of points){const d=Math.max(.08,Math.hypot((p.lat-lat)*1.1,(p.lon-lon)*Math.cos(lat*Math.PI/180))),x=1/(d*d);w+=x;sum+=x*p.wbgt_c}return sum/w}
@@ -41,3 +74,4 @@ async function loadField(){try{const [grid,boundary]=await Promise.all([fetch(ap
 const cityAliases={bangalore:"Bengaluru",bombay:"Mumbai",calcutta:"Kolkata",madras:"Chennai",cochin:"Kochi",trivandrum:"Thiruvananthapuram",poona:"Pune",gurgaon:"Gurugram",baroda:"Vadodara",benares:"Varanasi",banaras:"Varanasi",mysore:"Mysuru"};
 function renderSearchResults(results){searchResults.replaceChildren();if(!results||!results.length){searchResults.innerHTML="<p>City not found in India.</p>";return}const seen=new Set();results.forEach(p=>{const key=`${p.name}_${Number(p.lat).toFixed(2)}_${Number(p.lon).toFixed(2)}`;if(seen.has(key))return;seen.add(key);const b=document.createElement("button");b.type="button";b.textContent=`${p.name}${p.admin1?`, ${p.admin1}`:""}`;b.onclick=()=>{citySearch.value=p.name;searchResults.replaceChildren();const c={name:p.name,lat:p.lat,lon:p.lon};if(!markers.has(c.name)){const m=L.marker([c.lat,c.lon],{icon:markerIcon(),risk:null}).addTo(map);m.on("click",()=>selectCity(c));markers.set(c.name,m)}selectCity(c)};searchResults.append(b)})}
 cities.forEach(c=>{const m=L.marker([c.lat,c.lon],{icon:markerIcon(),risk:null}).addTo(map).bindTooltip(c.name,{direction:"top",offset:[0,-7],opacity:.9});m.on("click",()=>selectCity(c));markers.set(c.name,m)});map.on("zoomend",()=>{const show=map.getZoom()>=6;markers.forEach(m=>show?m.openTooltip():m.closeTooltip())});let timer,searchController;citySearch.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();const b=searchResults.querySelector("button");if(b)b.click()}});citySearch.addEventListener("input",()=>{clearTimeout(timer);if(searchController)searchController.abort();const q=citySearch.value.trim();searchResults.replaceChildren();if(q.length<2)return;const qLow=q.toLowerCase(),alias=cityAliases[qLow]||q,target=alias.toLowerCase();const localMatches=cities.filter(c=>c.name.toLowerCase().includes(qLow)||c.name.toLowerCase().includes(target));if(localMatches.length)renderSearchResults(localMatches);timer=setTimeout(async()=>{searchController=new AbortController();try{const r=await fetch(apiUrl(`/api/search?q=${encodeURIComponent(q)}`),{signal:searchController.signal}),d=await r.json();if(citySearch.value.trim()!==q)return;const combined=[...localMatches];if(d.results&&d.results.length)d.results.forEach(p=>combined.push(p));renderSearchResults(combined)}catch(e){if(e.name==="AbortError")return;if(citySearch.value.trim()===q){if(localMatches.length){renderSearchResults(localMatches)}else{searchResults.replaceChildren();searchResults.innerHTML=`<p>${e.message==="Failed to fetch"?"Unable to reach the local WBGT service. Start dashboard_server.py and try again.":e.message}</p>`}}}},200)});loadField();selectCity(cities[0],false);setInterval(()=>selected&&selectCity(selected,false),300000);
+

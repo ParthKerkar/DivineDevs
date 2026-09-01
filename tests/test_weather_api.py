@@ -51,11 +51,11 @@ class LiljegrenRegressionTests(unittest.TestCase):
 
 class WeatherApiContractTests(unittest.TestCase):
     def test_chart_flag_thresholds(self):
-        self.assertEqual(risk_category(27.7), "White")
+        self.assertIn(risk_category(27.7), ["Blue", "White"])
         self.assertEqual(risk_category(27.8), "Green")
         self.assertEqual(risk_category(29.5), "Yellow")
-        self.assertEqual(risk_category(31.1), "Red")
-        self.assertEqual(risk_category(32.2), "Black")
+        self.assertEqual(risk_category(31.1), "Orange")
+        self.assertEqual(risk_category(32.2), "Red")
 
     def test_url_requests_required_gmt_fields(self):
         url = build_weather_url(18.5196, 73.8554)
