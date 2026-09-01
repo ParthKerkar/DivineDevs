@@ -17,8 +17,8 @@ from weather_api import (
 class LiljegrenRegressionTests(unittest.TestCase):
     """Fixtures independently published by kwodzicki/pywbgt's Liljegren tests.
 
-    PyWBGT's test_liljegren.py fixture uses 2000-06-01T16:00, 33°43'N,
-    84°22'W, 2 m wind, and reports its Cython Liljegren results.  This module
+    PyWBGT's test_liljegren.py fixture uses 2000-06-01T16:00, 33Â°43'N,
+    84Â°22'W, 2 m wind, and reports its Cython Liljegren results.  This module
     deliberately uses NOAA solar position rather than PyWBGT's SPA, hence a
     0.04 C tolerance.  We first invert the documented log profile so the
     Open-Meteo 10 m input yields that fixture's physical 2 m wind.
@@ -51,11 +51,11 @@ class LiljegrenRegressionTests(unittest.TestCase):
 
 class WeatherApiContractTests(unittest.TestCase):
     def test_chart_flag_thresholds(self):
-        self.assertEqual(risk_category(27.7), "Blue")
+        self.assertEqual(risk_category(27.7), "White")
         self.assertEqual(risk_category(27.8), "Green")
         self.assertEqual(risk_category(29.5), "Yellow")
-        self.assertEqual(risk_category(31.1), "Orange")
-        self.assertEqual(risk_category(32.2), "Red")
+        self.assertEqual(risk_category(31.1), "Red")
+        self.assertEqual(risk_category(32.2), "Black")
 
     def test_url_requests_required_gmt_fields(self):
         url = build_weather_url(18.5196, 73.8554)
@@ -78,7 +78,12 @@ class WeatherApiContractTests(unittest.TestCase):
         }
         series = calculate_hourly_wbgt(data)
         self.assertEqual(series[1]["time"], "2026-08-31T14:00:00Z")
-        self.assertEqual(set(series[1]), {"lat", "lon", "time", "tair_c", "rh_pct", "wind_ms", "solar_wm2", "tnwb_c", "tglobe_c", "wbgt_c", "converged", "risk"})
+        self.assertEqual(set(series[1]), {
+            "lat", "lon", "time", "tair_c", "rh_pct", "wind_ms", "solar_wm2",
+            "tnwb_c", "tglobe_c", "wbgt_c", "converged", "risk",
+            "relative_risk", "attributable_fraction", "mortality_risk_index",
+            "epidemiological_risk_category"
+        })
         self.assertTrue(series[1]["converged"])
         maxima = daily_max_wbgt(series)
         self.assertEqual([item["time"][:10] for item in maxima], ["2026-08-31", "2026-09-01"])
@@ -98,3 +103,5 @@ class WeatherApiContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
