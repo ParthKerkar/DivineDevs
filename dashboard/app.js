@@ -38,6 +38,7 @@ const cities=[["Mumbai",19.076,72.878],["Delhi",28.614,77.209],["Bengaluru",12.9
 // Fixed threshold stops mirror the WBGT flag methodology, not the current API range.
 const colors={Blue:"#0284c7",Green:"#10b981",Yellow:"#f59e0b",Orange:"#ea580c",Red:"#dc2626",White:"#0284c7",Black:"#dc2626"}, stops=[[24,"#0284c7"],[27.8,"#10b981"],[29.5,"#f59e0b"],[31.1,"#ea580c"],[32.2,"#dc2626"],[35,"#881337"]];
 const map=L.map("map",{zoomControl:false,minZoom:4}).setView([22.7,79.2],5);
+window.heatShieldResizeMap=()=>map.invalidateSize();
 // Leaflet's normal overlay pane is 400.  Keep the base context below it and
 // put the provider's transparent annotation tiles in their own label pane.
 map.createPane("basemap");map.getPane("basemap").style.zIndex=200;

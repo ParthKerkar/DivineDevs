@@ -20,7 +20,7 @@ from recommendation_library import RECOMMENDATION_LIBRARY, get_library_recommend
 from risk_context_engine import build_risk_context
 from weather_api import fetch_heat_risk_for_city, fetch_heat_risk_for_coordinates
 
-GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent"
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 CACHE_TTL_SECONDS = 300  # 5 minutes cache
 GEMINI_TIMEOUT_SECONDS = int(os.environ.get("GEMINI_TIMEOUT_SECONDS", "30"))
 
@@ -129,10 +129,20 @@ def generate_deterministic_recommendations(risk_context: Dict[str, Any]) -> List
     return processed
 
 
+SITUATION_CATEGORY_ORDER = {
+    "student": ["OUTDOOR_ACTIVITY", "HYDRATION", "SUN_PROTECTION", "HEAT_ILLNESS_AWARENESS"],
+    "elderly-caregiver": ["VULNERABLE_PERSON_CHECK", "COOLING", "HYDRATION", "HEAT_ILLNESS_AWARENESS"],
+    "commuter": ["EXPOSURE_REDUCTION", "HYDRATION", "SUN_PROTECTION", "HEAT_ILLNESS_AWARENESS"],
+    "outdoor-exercise": ["OUTDOOR_ACTIVITY", "REST_RECOVERY", "HYDRATION", "HEAT_ILLNESS_AWARENESS"],
+    "general-public": ["EXPOSURE_REDUCTION", "COOLING", "HYDRATION", "HEAT_ILLNESS_AWARENESS"],
+}
+
+
 def call_ai_personalizer(
     risk_context: Dict[str, Any],
     approved_recommendations: List[Dict[str, Any]],
-    api_key: str
+    api_key: str,
+    situation_context: Optional[Dict[str, str]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """Call Google Gemini API to prioritize, contextualize, and tailor wording of approved actions."""
     system_prompt = (
@@ -154,6 +164,11 @@ def call_ai_personalizer(
         "     \"source_reference\": \"Document reference from input\"\n"
         "   }]"
     )
+    if situation_context:
+        system_prompt += (
+            "8. Use the selected situation focus to prioritize relevant approved actions. "
+            "Do not introduce situation-specific advice unless it appears in the approved recommendations.\n"
+        )
 
     user_payload = {
         "risk_context": {
@@ -171,8 +186,10 @@ def call_ai_personalizer(
         },
         "approved_recommendations": approved_recommendations
     }
+    if situation_context:
+        user_payload["selected_situation"] = situation_context
 
-    url = f"{GEMINI_API_BASE}?key={api_key}"
+    url = GEMINI_API_BASE
     body_data = {
         "contents": [
             {
@@ -190,7 +207,7 @@ def call_ai_personalizer(
     req = Request(
         url,
         data=json.dumps(body_data).encode("utf-8"),
-        headers={"Content-Type": "application/json"}
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key}
     )
 
     try:
@@ -304,7 +321,8 @@ def validate_ai_output(
 
 def get_heat_health_recommendations_for_risk_payload(
     heat_risk_payload: Dict[str, Any],
-    audience: str = "PUBLIC"
+    audience: str = "PUBLIC",
+    situation_context: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Generate recommendations from an existing heat-risk pipeline payload."""
     curr = heat_risk_payload.get("current", {})
@@ -322,6 +340,10 @@ def get_heat_health_recommendations_for_risk_payload(
 
     # 1. Deterministic evidence selection
     deterministic_recs = generate_deterministic_recommendations(risk_ctx)
+    if situation_context:
+        category_order = SITUATION_CATEGORY_ORDER.get(situation_context.get("value", ""), [])
+        category_rank = {category: index for index, category in enumerate(category_order)}
+        deterministic_recs.sort(key=lambda item: (category_rank.get(item.get("category"), len(category_rank)), item.get("priority", 3)))
 
     # 2. AI Prioritization / Personalization if key available
     api_key = get_ai_api_key()
@@ -329,7 +351,7 @@ def get_heat_health_recommendations_for_risk_payload(
     final_recs = deterministic_recs
 
     if api_key:
-        ai_raw = call_ai_personalizer(risk_ctx, deterministic_recs, api_key)
+        ai_raw = call_ai_personalizer(risk_ctx, deterministic_recs, api_key, situation_context)
         if ai_raw:
             validated = validate_ai_output(ai_raw, deterministic_recs)
             if validated:

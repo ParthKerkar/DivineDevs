@@ -19,11 +19,14 @@ python dashboard_server.py
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from geocoding import geocode_city
 from recommendation_engine import (
@@ -31,6 +34,7 @@ from recommendation_engine import (
     get_heat_health_recommendations_for_coords,
     get_heat_health_recommendations_for_risk_payload,
 )
+from risk_context_engine import build_risk_context, get_wbgt_severity_level
 from weather_api import (
     CURRENT_FIELDS,
     build_dashboard_payload,
@@ -270,6 +274,7 @@ def geocode_city_list(query: str):
                             "country": item.get("country", "India"),
                             "lat": lat,
                             "lon": lon,
+                            "timezone": item.get("timezone", "Asia/Kolkata"),
                         })
         except Exception:
             pass
@@ -363,6 +368,423 @@ def get_cached_heat_risk_for_coords(latitude: float, longitude: float) -> Dict[s
     return payload
 
 
+def get_cached_personal_forecast(latitude: float, longitude: float, city_name: Optional[str] = None, location_meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Cache a six-UTC-day feed so five complete local calendar days are available."""
+    key = f"personal:{round(latitude, 4)},{round(longitude, 4)}:6"
+    cached = _heat_risk_cache.get(key)
+    if cached and time.time() - cached["created"] < CACHE_SECONDS:
+        payload = cached["payload"]
+        if location_meta or city_name:
+            payload = dict(payload)
+            payload["location"] = dict(payload.get("location", {}), **(location_meta or {}))
+            if city_name:
+                payload["location"]["city"] = city_name
+        return payload
+    payload = fetch_heat_risk_for_coordinates(
+        latitude, longitude, city_name=city_name, forecast_days=6, location_meta=location_meta,
+        allow_offline_fallback=False,
+    )
+    payload["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _heat_risk_cache[key] = {"created": time.time(), "payload": payload}
+    return payload
+
+
+def build_city_comparison_response(cities: Any) -> Dict[str, Any]:
+    if not isinstance(cities, list) or len(cities) != 2:
+        raise ValueError("Choose exactly two cities to compare.")
+    if any(not isinstance(city, str) or not city.strip() or len(city) > 120 for city in cities):
+        raise ValueError("Enter two valid city names.")
+
+    locations = [geocode_city(city.strip()) for city in cities]
+    for requested, location in zip(cities, locations):
+        if location.get("country_code") != "IN" and not point_in_india(location["longitude"], location["latitude"]):
+            raise ValueError(f"{requested.strip()} is not an Indian location. Choose a city in India.")
+    coordinate_keys = [(round(item["latitude"], 4), round(item["longitude"], 4)) for item in locations]
+    if coordinate_keys[0] == coordinate_keys[1]:
+        raise ValueError("Choose two distinct cities to compare.")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(
+            get_cached_personal_forecast,
+            float(location["latitude"]), float(location["longitude"]),
+            location["city"], location,
+        ) for location in locations]
+        payloads = [future.result() for future in futures]
+    entries = [build_city_comparison_entry(payload) for payload in payloads]
+    first, second = entries
+    peak_delta = (float(first["peak"]["wbgt"]) - float(second["peak"]["wbgt"])) if first["peak"] and second["peak"] else None
+    high_delta = first["highStress"]["hours"] - second["highStress"]["hours"]
+    streak_delta = first["elevatedRun"]["days"] - second["elevatedRun"]["days"]
+
+    def leader(metric, value_a, value_b):
+        if value_a is None or value_b is None:
+            return f"{metric} could not be compared because forecast values are unavailable."
+        if value_a == value_b:
+            return f"Both cities have the same {metric} in the available forecast."
+        index = 0 if value_a > value_b else 1
+        return f"{entries[index]['location'].get('city', cities[index])} has the greater {metric}."
+
+    interpretations = [
+        leader("peak WBGT", first["peak"]["wbgt"] if first["peak"] else None, second["peak"]["wbgt"] if second["peak"] else None),
+        leader("number of high-stress hours", first["highStress"]["hours"], second["highStress"]["hours"]),
+        leader("consecutive elevated-day run", first["elevatedRun"]["days"], second["elevatedRun"]["days"]),
+    ]
+    interpretations.extend(
+        f"{entry['location'].get('city', cities[index])}: {entry['nighttime']['message']}"
+        for index, entry in enumerate(entries)
+    )
+    interpretations.extend(
+        f"{entry['location'].get('city', cities[index])}: WBGT changed {entry['change']['trend'].lower()} by {entry['change']['deltaC']:+.1f}°C from the first to last valid forecast hour."
+        for index, entry in enumerate(entries) if entry["change"]["deltaC"] is not None
+    )
+    return {
+        "cities": entries,
+        "comparison": {"peakDifferenceC": round(peak_delta, 1) if peak_delta is not None else None, "highStressHoursDifference": high_delta, "consecutiveElevatedDaysDifference": streak_delta},
+        "interpretation": interpretations,
+        "methodology": {
+            "forecastDays": 5,
+            "highStressThresholdWbgt": 29.5,
+            "highStressDefinition": "High or above, using existing project WBGT bands (WBGT ≥ 29.5°C).",
+            "elevatedDayThresholdWbgt": 27.8,
+            "elevatedDayDefinition": "A complete local forecast day with a maximum WBGT ≥ 27.8°C; incomplete days break the consecutive run.",
+            "nighttimeWindow": "00:00–05:59 local time; reduction is compared with the 10:00–17:59 local daytime peak on that date when both are available.",
+            "changeStableToleranceC": 0.5,
+            "timestampComparison": "Hourly values retain UTC timestamps for absolute-time alignment; each city is displayed in its local timezone.",
+            "wbgtMethod": "Liljegren (2008) outdoor WBGT physical model.",
+        },
+    }
+
+
+def prepare_local_forecast(payload: Dict[str, Any], day_limit: int = 5) -> Dict[str, Any]:
+    """Select future observations in the first five location-local forecast dates."""
+    location = payload.get("location", {})
+    try:
+        local_zone = ZoneInfo(location.get("timezone") or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        local_zone = ZoneInfo("UTC")
+    current_text = payload.get("current", {}).get("time")
+    current_dt = None
+    if current_text:
+        try:
+            current_dt = datetime.fromisoformat(current_text.replace("Z", "+00:00"))
+            current_dt = current_dt.replace(tzinfo=current_dt.tzinfo or timezone.utc)
+        except ValueError:
+            current_dt = None
+
+    days: Dict[str, list] = {}
+    for item in payload.get("hourly", []):
+        raw_time = item.get("time")
+        if not raw_time:
+            continue
+        try:
+            timestamp = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+            timestamp = timestamp.replace(tzinfo=timestamp.tzinfo or timezone.utc)
+        except ValueError:
+            continue
+        if current_dt and timestamp <= current_dt:
+            continue
+        local_date = timestamp.astimezone(local_zone).date().isoformat()
+        days.setdefault(local_date, []).append(item)
+
+    first_local_hour = None
+    current_local_date = None
+    if current_dt:
+        next_hour_utc = current_dt.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        first_forecast_local = next_hour_utc.astimezone(local_zone)
+        first_local_hour = first_forecast_local.hour
+        current_local_date = first_forecast_local.date()
+    start_date = current_local_date or (datetime.fromisoformat(min(days)).date() if days else None)
+    selected_dates = [(start_date + timedelta(days=offset)).isoformat() for offset in range(day_limit)] if start_date else []
+    hourly = [item for day in selected_dates for item in days.get(day, [])]
+    daily = []
+    coverage_days = []
+    for index, local_date in enumerate(selected_dates):
+        items = days.get(local_date, [])
+        valid = [item for item in items if item.get("wbgt") is not None]
+        peak = max(valid, key=lambda item: float(item["wbgt"]), default=None)
+        expected = max(0, 24 - first_local_hour) if local_date == (current_local_date.isoformat() if current_local_date else None) and first_local_hour is not None else 24
+        complete = bool(expected and len(valid) >= expected and len(items) >= expected)
+        coverage_days.append({
+            "date": local_date, "validHours": len(valid), "returnedHours": len(items),
+            "expectedHours": expected, "complete": complete,
+        })
+        if peak:
+            daily.append(dict(peak, date=local_date, validHours=len(valid), expectedHours=expected, complete=complete))
+
+    return {
+        "timezone": location.get("timezone") or "UTC",
+        "hourly": hourly,
+        "daily": daily,
+        "coverageDays": coverage_days,
+        "forecastDaysRequested": day_limit,
+        "availableLocalDays": len(selected_dates),
+    }
+
+
+def build_city_comparison_entry(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive comparable heat metrics from an existing calculated forecast payload."""
+    local = prepare_local_forecast(payload, day_limit=5)
+    try:
+        zone = ZoneInfo(local["timezone"])
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    hourly = local["hourly"]
+    valid_hours = [item for item in hourly if item.get("wbgt") is not None and item.get("time")]
+    peak = max(valid_hours, key=lambda item: float(item["wbgt"]), default=None)
+    start = min(valid_hours, key=lambda item: item["time"], default=None)
+    end = max(valid_hours, key=lambda item: item["time"], default=None)
+    high_hours = sum(1 for item in valid_hours if float(item["wbgt"]) >= 29.5)
+
+    elevated_threshold = 27.8
+    longest_run = 0
+    current_run = []
+    longest_dates = []
+    incomplete_dates = []
+    for day in local["coverageDays"]:
+        day_peak = next((item for item in local["daily"] if item["date"] == day["date"]), None)
+        if not day["complete"]:
+            incomplete_dates.append(day["date"])
+        elevated = bool(day["complete"] and day_peak and float(day_peak["wbgt"]) >= elevated_threshold)
+        if elevated:
+            current_run.append(day["date"])
+            if len(current_run) > longest_run:
+                longest_run, longest_dates = len(current_run), list(current_run)
+        else:
+            current_run = []
+
+    by_local_date: Dict[str, list] = {}
+    for item in valid_hours:
+        timestamp = datetime.fromisoformat(item["time"].replace("Z", "+00:00"))
+        local_time = timestamp.replace(tzinfo=timestamp.tzinfo or timezone.utc).astimezone(zone)
+        by_local_date.setdefault(local_time.date().isoformat(), []).append((local_time, item))
+    overnight_candidates = []
+    relief_candidates = []
+    for date, items in by_local_date.items():
+        overnight = [(dt, item) for dt, item in items if 0 <= dt.hour < 6]
+        daytime = [(dt, item) for dt, item in items if 10 <= dt.hour < 18]
+        overnight_candidates.extend((item, date) for _, item in overnight)
+        if overnight and daytime:
+            overnight_min = min(overnight, key=lambda entry: float(entry[1]["wbgt"]))
+            daytime_peak = max(daytime, key=lambda entry: float(entry[1]["wbgt"]))
+            relief_candidates.append({
+                "date": date, "overnight": overnight_min[1], "daytimePeak": daytime_peak[1],
+                "reductionC": round(float(daytime_peak[1]["wbgt"]) - float(overnight_min[1]["wbgt"]), 1),
+            })
+    overnight_min = min(overnight_candidates, key=lambda entry: float(entry[0]["wbgt"]), default=None)
+    nighttime = None
+    if overnight_min:
+        item, date = overnight_min
+        nighttime = {"minimumWbgt": item["wbgt"], "time": item["time"], "date": date}
+        pair = next((pair for pair in relief_candidates if pair["date"] == date), None)
+        if pair:
+            nighttime.update({"daytimePeakWbgt": pair["daytimePeak"]["wbgt"], "reductionC": pair["reductionC"], "daytimePeakTime": pair["daytimePeak"]["time"]})
+
+    delta = round(float(end["wbgt"]) - float(start["wbgt"]), 1) if start and end else None
+    change_trend = "Unavailable" if delta is None else "Increasing" if delta > 0.5 else "Decreasing" if delta < -0.5 else "Approximately stable"
+    peak_data = None
+    if peak:
+        peak_data = {"wbgt": peak["wbgt"], "time": peak["time"], "localTime": datetime.fromisoformat(peak["time"].replace("Z", "+00:00")).replace(tzinfo=timezone.utc).astimezone(zone).isoformat(), "category": get_wbgt_severity_level(peak["wbgt"])}
+    city = dict(payload.get("location", {}))
+    coverage = {
+        "requestedLocalDays": 5, "returnedLocalDays": sum(1 for day in local["coverageDays"] if day["returnedHours"]),
+        "availableHours": len(valid_hours), "returnedHours": len(hourly),
+        "expectedHours": sum(day["expectedHours"] for day in local["coverageDays"]),
+        "incompleteDays": incomplete_dates, "days": local["coverageDays"],
+    }
+    return {
+        "location": city, "timezone": local["timezone"], "coverage": coverage,
+        "hourly": hourly, "daily": local["daily"],
+        "peak": peak_data,
+        "highStress": {"hours": high_hours, "validHours": len(valid_hours), "thresholdWbgt": 29.5, "category": "High or above"},
+        "elevatedRun": {"days": longest_run, "startDate": longest_dates[0] if longest_dates else None, "endDate": longest_dates[-1] if longest_dates else None, "dates": longest_dates, "thresholdWbgt": elevated_threshold, "incompleteDates": incomplete_dates},
+        "nighttime": {"window": "00:00–05:59 local", "minimum": nighttime, "message": "Overnight values describe comparative forecast conditions, not guaranteed recovery or safety." if nighttime else "No valid overnight WBGT values are available."},
+        "change": {"first": {"wbgt": start["wbgt"], "time": start["time"]} if start else None, "last": {"wbgt": end["wbgt"], "time": end["time"]} if end else None, "deltaC": delta, "trend": change_trend, "stableToleranceC": 0.5},
+        "risk": {"mortalityRiskIndex": payload.get("current", {}).get("mortalityRiskIndex"), "relativeRisk": payload.get("current", {}).get("relativeRisk"), "overallHeatHealthLevel": build_risk_context(payload.get("current", {}).get("wbgt"), payload.get("current", {}).get("mortalityRiskIndex"), payload.get("current", {}).get("relativeRisk"), payload.get("current", {}).get("attributableFraction"), local["daily"]).get("overall_heat_health_level")},
+    }
+
+
+PERSONAL_AUDIENCE_MAP = {
+    "general public": "PUBLIC",
+    "public": "PUBLIC",
+    "outdoor worker": "OUTDOOR_WORKER",
+    "outdoor-worker": "OUTDOOR_WORKER",
+    "worker": "OUTDOOR_WORKER",
+    "student": "PUBLIC",
+    "elderly person or caregiver": "PUBLIC",
+    "elderly person": "PUBLIC",
+    "caregiver": "PUBLIC",
+    "commuter": "PUBLIC",
+    "outdoor exercise": "PUBLIC",
+    "outdoor-exercise": "PUBLIC",
+    "exercise": "PUBLIC",
+}
+
+PERSONAL_SITUATIONS = {
+    "general-public": {"label": "General public", "audience": "PUBLIC", "focus": "Everyday outdoor exposure and practical heat precautions."},
+    "outdoor-worker": {"label": "Outdoor worker", "audience": "OUTDOOR_WORKER", "focus": "Outdoor work exposure, rest, shade, and work scheduling."},
+    "student": {"label": "Student", "audience": "PUBLIC", "focus": "School travel and outdoor activities."},
+    "elderly-caregiver": {"label": "Elderly person or caregiver", "audience": "PUBLIC", "focus": "Reducing exposure and checking on people who may be more vulnerable to heat."},
+    "commuter": {"label": "Commuter", "audience": "PUBLIC", "focus": "Travel timing, shade, and exposure while commuting."},
+    "outdoor-exercise": {"label": "Outdoor exercise", "audience": "PUBLIC", "focus": "Adjusting outdoor exertion to comparatively lower-stress forecast periods."},
+}
+
+
+def normalize_personal_audience(raw_audience: Optional[str]) -> str:
+    if raw_audience is None:
+        return "PUBLIC"
+    if not isinstance(raw_audience, str):
+        raise ValueError("Audience must be a supported category.")
+    normalized = str(raw_audience).strip().lower()
+    if normalized in PERSONAL_AUDIENCE_MAP:
+        return PERSONAL_AUDIENCE_MAP[normalized]
+    upper = raw_audience.strip().upper()
+    if upper in {"PUBLIC", "OUTDOOR_WORKER", "AUTHORITY"}:
+        return upper
+    return "PUBLIC"
+
+
+def build_personal_heat_risk_response(city: Optional[str] = None, latitude: Optional[float] = None, longitude: Optional[float] = None, audience: str = "PUBLIC", situation: Optional[str] = None, timezone_name: Optional[str] = None) -> Dict[str, Any]:
+    if city is not None and (not isinstance(city, str) or len(city) > 120):
+        raise ValueError("Enter a valid city or location name.")
+    if latitude is not None and longitude is not None:
+        validate_location(latitude, longitude)
+        payload = get_cached_personal_forecast(latitude, longitude, city_name=city)
+        if city:
+            payload = dict(payload)
+            payload["location"] = dict(payload.get("location", {}), city=str(city)[:120])
+    elif city:
+        if not isinstance(city, str) or not city.strip() or len(city) > 120:
+            raise ValueError("Enter a valid city or location name.")
+        location_meta = geocode_city(city.strip())
+        payload = get_cached_personal_forecast(
+            float(location_meta["latitude"]), float(location_meta["longitude"]),
+            city_name=location_meta["city"], location_meta=location_meta,
+        )
+    else:
+        raise ValueError("Missing location. Provide 'city' or both 'lat' and 'lon'.")
+    if timezone_name:
+        if not isinstance(timezone_name, str) or len(timezone_name) > 80:
+            raise ValueError("Invalid location timezone.")
+        try:
+            ZoneInfo(str(timezone_name))
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("Invalid location timezone.")
+        payload = dict(payload)
+        payload["location"] = dict(payload.get("location", {}), timezone=str(timezone_name))
+
+    local_forecast = prepare_local_forecast(payload, day_limit=5)
+    payload = dict(payload)
+    payload["hourly"] = local_forecast["hourly"]
+    payload["forecast"] = local_forecast["daily"]
+    situation_info = PERSONAL_SITUATIONS.get(str(situation or "general-public"))
+    audience_key = situation_info["audience"] if situation_info else normalize_personal_audience(audience)
+    risk_context = build_risk_context(
+        current_wbgt=payload.get("current", {}).get("wbgt"),
+        current_mri=payload.get("current", {}).get("mortalityRiskIndex"),
+        current_rr=payload.get("current", {}).get("relativeRisk"),
+        current_af=payload.get("current", {}).get("attributableFraction"),
+        forecast_days=payload.get("forecast", []),
+        audience=audience_key,
+    )
+    recommendation_payload = get_heat_health_recommendations_for_risk_payload(
+        payload,
+        audience=audience_key,
+        situation_context={
+            "value": situation or "general-public",
+            "label": situation_info["label"] if situation_info else "General public",
+            "focus": situation_info["focus"] if situation_info else "Everyday heat exposure and practical precautions.",
+        },
+    )
+    forecast = payload.get("forecast", [])
+    hourly = payload.get("hourly", [])
+    local_zone = ZoneInfo(local_forecast["timezone"])
+    current_wbgt = payload.get("current", {}).get("wbgt")
+    peak_entry = max((item for item in hourly if item.get("wbgt") is not None), key=lambda item: float(item.get("wbgt", -999)), default=None)
+
+    improvement = None
+    if current_wbgt is not None and hourly:
+        for item in hourly:
+            wbgt = item.get("wbgt")
+            if wbgt is None:
+                continue
+            if wbgt < current_wbgt and (current_wbgt - wbgt) >= 0.8:
+                improvement = {
+                    "time": item.get("time") or item.get("date"),
+                    "wbgt": wbgt,
+                    "fromWbgt": current_wbgt,
+                    "rule": "First forecast hour at least 0.8°C below current WBGT.",
+                    "message": f"A comparatively lower-stress period is first forecast at {wbgt:.1f}°C, at least 0.8°C below current WBGT.",
+                }
+                break
+    if improvement is None:
+        if current_wbgt is None or not hourly:
+            improvement = {"message": "Current WBGT or hourly forecast values are unavailable, so an improvement period cannot be assessed.", "time": None, "wbgt": None, "rule": "Improvement requires a forecast hour at least 0.8°C below current WBGT."}
+        else:
+            improvement = {"message": "The available five-day forecast does not show a clear improvement period at least 0.8°C below current WBGT.", "time": None, "wbgt": None, "rule": "Improvement requires a forecast hour at least 0.8°C below current WBGT."}
+
+    lower_periods = []
+    if peak_entry:
+        peak_wbgt = float(peak_entry["wbgt"])
+        lower_periods = [item for item in hourly if item.get("wbgt") is not None and float(item["wbgt"]) <= peak_wbgt - 1.0][:8]
+
+    # Derive nighttime relief only by comparing forecast hourly values, with no
+    # implication that a lower value is safe. Local time is formatted by UI.
+    nighttime = []
+    for item in hourly:
+        if not item.get("time"):
+            continue
+        try:
+            dt = datetime.fromisoformat(item["time"].replace("Z", "+00:00"))
+            dt = dt.replace(tzinfo=dt.tzinfo or timezone.utc).astimezone(local_zone)
+            if dt.hour in (0, 1, 2, 3, 4, 5):
+                nighttime.append(item)
+        except ValueError:
+            continue
+    nighttime_peak = max((item.get("wbgt") for item in nighttime if item.get("wbgt") is not None), default=None)
+    if nighttime_peak is None:
+        nighttime_message = "Nighttime WBGT information is unavailable in this forecast."
+    elif peak_entry and float(nighttime_peak) <= float(peak_entry["wbgt"]) - 0.8:
+        nighttime_message = f"Nighttime WBGT reaches {float(nighttime_peak):.1f}°C, at least 0.8°C below the forecast peak; this is comparative relief, not a guarantee of safe conditions."
+    else:
+        nighttime_message = f"Nighttime WBGT remains as high as {float(nighttime_peak):.1f}°C; the available forecast does not show a 0.8°C reduction from its peak during 00:00–05:59 local time."
+    nighttime_relief = {
+        "available": bool(nighttime),
+        "maxWbgt": nighttime_peak,
+        "message": nighttime_message,
+    }
+
+    peak_time = peak_entry.get("time") if peak_entry else None
+    summary = {
+        "location": payload.get("location", {}).get("city") or "Selected location",
+        "currentWbgt": current_wbgt,
+        "currentCategory": get_wbgt_severity_level(current_wbgt),
+        "peakForecast": {"wbgt": peak_entry.get("wbgt") if peak_entry else None, "time": peak_time},
+        "riskCategory": risk_context.get("overall_heat_health_level", "LOW"),
+        "explanation": "Environmental heat stress is assessed with the project’s Liljegren WBGT model and epidemiological mortality-risk framework. This summary distinguishes scientific thermal stress from projected population health risk.",
+        "trendLabel": risk_context.get("forecast_trend", "STABLE").replace("_", " ").title(),
+        "persistence": f"{risk_context.get('elevated_heat_days', 0)} day(s) of elevated heat stress are projected in the five-day forecast.",
+        "improvement": improvement,
+        "lowerPeriods": lower_periods,
+        "nighttimeRelief": dict(nighttime_relief, period="00:00–05:59 local time"),
+        "activityFocus": situation_info["focus"] if situation_info else "Everyday heat exposure and practical precautions.",
+    }
+
+    return {
+        "location": payload.get("location", {}),
+        "situation": {"value": situation or audience_key, "label": situation_info["label"] if situation_info else audience_key.replace("_", " ").title(), "audience": audience_key},
+        "current": payload.get("current", {}),
+        "hourly": hourly,
+        "forecast": forecast,
+        "forecastCoverage": {"requestedLocalDays": 5, "availableLocalDays": local_forecast["availableLocalDays"], "days": local_forecast["coverageDays"]},
+        "summary": summary,
+        "risk_context": recommendation_payload.get("risk_context", {}),
+        "insights": recommendation_payload.get("insights", []),
+        "recommendations": recommendation_payload.get("recommendations", []),
+        "recommendation_engine": recommendation_payload.get("engine_metadata", {}),
+        "methodology": payload.get("methodology", {}),
+    }
+
+
 class HeatRiskApiHandler(SimpleHTTPRequestHandler):
 
     def __init__(self, *args, **kwargs):
@@ -407,6 +829,55 @@ class HeatRiskApiHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/city-comparison":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length < 0 or content_length > 16_384:
+                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Request body is too large."})
+                    return
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                data = json.loads(body)
+                if not isinstance(data, dict):
+                    raise ValueError("Request must be a JSON object.")
+                self._send_json(HTTPStatus.OK, build_city_comparison_response(data.get("cities")))
+            except ValueError as err:
+                status = HTTPStatus.NOT_FOUND if "not found" in str(err).lower() else HTTPStatus.BAD_REQUEST
+                self._send_json(status, {"error": str(err)})
+            except Exception:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "City forecasts are temporarily unavailable. Please retry."})
+            return
+
+        if parsed.path == "/api/personal-heat-risk":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length < 0 or content_length > 16_384:
+                    self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "Request body is too large."})
+                    return
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                data = json.loads(body)
+                if not isinstance(data, dict):
+                    raise ValueError("Request must be a JSON object.")
+                city = data.get("city")
+                lat = data.get("lat") if data.get("lat") is not None else data.get("latitude")
+                lon = data.get("lon") if data.get("lon") is not None else data.get("longitude")
+                audience = data.get("audience", "PUBLIC")
+                situation = data.get("situation")
+                timezone_name = data.get("timezone")
+                if situation is not None and situation not in PERSONAL_SITUATIONS:
+                    raise ValueError("Unsupported situation selection.")
+                if lat is not None and lon is not None:
+                    self._send_json(HTTPStatus.OK, build_personal_heat_risk_response(city=city, latitude=float(lat), longitude=float(lon), audience=audience, situation=situation, timezone_name=timezone_name))
+                elif city:
+                    self._send_json(HTTPStatus.OK, build_personal_heat_risk_response(city=city, audience=audience, situation=situation, timezone_name=timezone_name))
+                else:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Missing parameter. Provide 'city' or 'lat' and 'lon'."})
+            except ValueError as err:
+                status = HTTPStatus.NOT_FOUND if "not found" in str(err).lower() else HTTPStatus.BAD_REQUEST
+                self._send_json(status, {"error": str(err)})
+            except Exception as err:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "The heat-risk analysis is temporarily unavailable. Please retry."})
+            return
+
         if parsed.path == "/api/recommendations":
             try:
                 content_length = int(self.headers.get("Content-Length", 0))
@@ -498,6 +969,30 @@ class HeatRiskApiHandler(SimpleHTTPRequestHandler):
                 self._send_json(HTTPStatus.NOT_FOUND if "not found" in str(err).lower() else HTTPStatus.BAD_REQUEST, {"error": str(err)})
             except Exception as err:
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": f"Failed to compute heat risk: {err}"})
+            return
+
+        if path == "/api/personal-heat-risk":
+            try:
+                city = query.get("city", [None])[0]
+                lat_str = query.get("lat", [None])[0] or query.get("latitude", [None])[0]
+                lon_str = query.get("lon", [None])[0] or query.get("longitude", [None])[0]
+                audience = query.get("audience", ["PUBLIC"])[0]
+                situation = query.get("situation", [None])[0]
+                timezone_name = query.get("timezone", [None])[0]
+                if situation is not None and situation not in PERSONAL_SITUATIONS:
+                    raise ValueError("Unsupported situation selection.")
+                if city:
+                    self._send_json(HTTPStatus.OK, build_personal_heat_risk_response(city=city, audience=audience, situation=situation, timezone_name=timezone_name))
+                elif lat_str is not None and lon_str is not None:
+                    lat, lon = float(lat_str), float(lon_str)
+                    validate_location(lat, lon)
+                    self._send_json(HTTPStatus.OK, build_personal_heat_risk_response(latitude=lat, longitude=lon, audience=audience, situation=situation, timezone_name=timezone_name))
+                else:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Missing parameter. Provide ?city=<city> or ?lat=<lat>&lon=<lon>"})
+            except ValueError as err:
+                self._send_json(HTTPStatus.NOT_FOUND if "not found" in str(err).lower() else HTTPStatus.BAD_REQUEST, {"error": str(err)})
+            except Exception as err:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "The heat-risk analysis is temporarily unavailable. Please retry."})
             return
 
         if path == "/api/recommendations":
